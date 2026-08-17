@@ -19,9 +19,41 @@ const userSchema = new mongoose.Schema(
 
     role: {
       type: String,
-      enum: ["customer", "user", "admin"],
+      enum: ["customer", "user", "admin", "viewer"],
       default: "user",
     },
+    loyaltyCards: [
+      {
+        stamps: {
+          type: Number,
+          default: 0,
+          min: 0,
+          max: 10,
+        },
+
+        history: [
+          {
+            stamps: {
+              type: Number,
+              required: true,
+              min: 0,
+              max: 10,
+            },
+
+            action: {
+              type: String,
+              enum: ["added", "removed", "redeemed", "reset"],
+              required: true,
+            },
+
+            date: {
+              type: Date,
+              default: Date.now,
+            },
+          },
+        ],
+      },
+    ],
   },
   {
     timestamps: true,

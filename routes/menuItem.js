@@ -12,7 +12,7 @@ const {
   updateImage,
 } = require("../controllers/menuItem");
 
-router.route("/").get(getMenuItems).post(auth, createMenuItem);
+router.route("/").get(auth, getMenuItems).post(auth, createMenuItem);
 
 router
   .route("/:id")

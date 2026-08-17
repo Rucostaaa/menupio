@@ -23,7 +23,10 @@ const menuItemSchema = new mongoose.Schema(
     ingredients: [String],
 
     allergens: [String],
-
+    owner: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+    },
     available: {
       type: Boolean,
       default: true,

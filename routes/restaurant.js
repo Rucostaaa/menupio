@@ -13,7 +13,7 @@ const {
   updateLogo,
 } = require("../controllers/restaurant");
 
-router.route("/").get(getRestaurants).post(auth, createRestaurant);
+router.route("/").get(auth, getRestaurants).post(auth, createRestaurant);
 
 router
   .route("/:id")

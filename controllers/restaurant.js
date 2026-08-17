@@ -11,9 +11,10 @@ exports.createRestaurant = catchAsync(async (req, res) => {
 
   res.status(201).json(restaurant);
 });
-
 exports.getRestaurants = catchAsync(async (req, res) => {
-  const restaurants = await Restaurant.find().populate("owner");
+  const restaurants = await Restaurant.find({
+    owner: req.user._id,
+  }).populate("owner");
 
   res.json(restaurants);
 });

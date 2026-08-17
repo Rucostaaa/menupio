@@ -3,13 +3,18 @@ const cloudinary = require("../utils/Claudinary");
 const catchAsync = require("../utils/catchAsync");
 
 exports.createMenuItem = catchAsync(async (req, res) => {
-  const item = await MenuItem.create(req.body);
+  const item = await MenuItem.create({
+    ...req.body,
+    owner: req.user._id,
+  });
 
   res.status(201).json(item);
 });
 
 exports.getMenuItems = catchAsync(async (req, res) => {
-  const items = await MenuItem.find().populate({ path: "category" });
+  const items = await MenuItem.find({ owner: req.user._id }).populate({
+    path: "category",
+  });
 
   res.json(items);
 });
