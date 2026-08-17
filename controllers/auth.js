@@ -40,9 +40,20 @@ exports.register = catchAsync(async (req, res) => {
 |--------------------------------------------------------------------------
 | LOGIN
 |--------------------------------------------------------------------------
-*/
-exports.login = catchAsync(async (req, res) => {
+*/ exports.login = catchAsync(async (req, res) => {
+  console.log("=== LOGIN ===");
+  console.log("Origin:", req.headers.origin);
+  console.log("User-Agent:", req.headers["user-agent"]);
+  console.log("Body:", {
+    email: req.body?.email,
+    hasPassword: !!req.body?.password,
+  });
+
   const { email, password } = req.body;
+
+  if (!email || !password) {
+    throw new AppError("Email and password are required", 400);
+  }
 
   const user = await User.findOne({ email });
 
