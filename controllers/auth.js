@@ -57,11 +57,11 @@ exports.register = catchAsync(async (req, res) => {
 
   const user = await User.findOne({ email });
 
-  if (!user) throw new AppError("Invalid credentials", 401);
+  if (!user) throw new AppError("Credenciais invalidas", 401);
 
   const valid = await user.comparePassword(password);
 
-  if (!valid) throw new AppError("Invalid credentials", 401);
+  if (!valid) throw new AppError("Credenciais invalidas", 401);
 
   const token = generateToken(user._id);
 

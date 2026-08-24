@@ -56,8 +56,13 @@ app.get("/", (req, res) => {
 });
 
 app.get("/health", (req, res) => {
+  const mongoState = mongoose.connection.readyState;
+
   res.status(200).json({
     status: "UP",
+
+    mongodb: mongoState === 1 ? "CONNECTED" : "DISCONNECTED",
+
     timestamp: new Date(),
   });
 });
@@ -69,14 +74,20 @@ app.get("/health", (req, res) => {
 */
 
 app.use("/api/auth", require("./routes/auth"));
+
 app.use("/api/users", require("./routes/user"));
+
 app.use("/api/restaurants", require("./routes/restaurant"));
+
 app.use("/api/categories", require("./routes/category"));
+
 app.use("/api/products", require("./routes/menuItem"));
+
+app.use("/api/menu", require("./routes/menu"));
 
 /*
 |--------------------------------------------------------------------------
-| 404 Handler
+| 404
 |--------------------------------------------------------------------------
 */
 
@@ -96,10 +107,28 @@ app.use((req, res) => {
 app.use((err, req, res, next) => {
   console.error(err);
 
-  res.status(err.status || 500).json({
+  res.status(err.statusCode || 500).json({
     success: false,
     message: err.message || "Internal Server Error",
   });
+});
+
+/*
+|--------------------------------------------------------------------------
+| MongoDB Events
+|--------------------------------------------------------------------------
+*/
+
+mongoose.connection.on("connected", () => {
+  console.log("✅ MongoDB Connected");
+});
+
+mongoose.connection.on("error", (error) => {
+  console.error("❌ MongoDB Error:", error.message);
+});
+
+mongoose.connection.on("disconnected", () => {
+  console.warn("⚠️ MongoDB Disconnected");
 });
 
 /*
@@ -108,22 +137,37 @@ app.use((err, req, res, next) => {
 |--------------------------------------------------------------------------
 */
 
-mongoose
-  .connect(process.env.MONGO_URL, {
-    autoIndex: true,
-  })
-  .then(() => {
-    console.log("✅ MongoDB Connected");
+const connectMongoDB = async () => {
+  try {
+    await mongoose.connect(process.env.MONGO_URL, {
+      autoIndex: true,
 
-    app.listen(PORT, () => {
-      console.log(`🚀 Server running on http://localhost:${PORT}`);
+      // How long to wait for a server
+      serverSelectionTimeoutMS: 5000,
+
+      // How long to wait when connecting
+      connectTimeoutMS: 10000,
     });
-  })
-  .catch((error) => {
-    console.error("❌ MongoDB Connection Error");
-    console.error(error);
-    process.exit(1);
-  });
+
+    console.log("✅ MongoDB connection established");
+  } catch (error) {
+    console.error("❌ MongoDB Connection Error:", error.message);
+
+    console.log("🔄 MongoDB will retry automatically...");
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
+| Start Server
+|--------------------------------------------------------------------------
+*/
+
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on http://localhost:${PORT}`);
+
+  connectMongoDB();
+});
 
 /*
 |--------------------------------------------------------------------------
@@ -131,20 +175,22 @@ mongoose
 |--------------------------------------------------------------------------
 */
 
-process.on("SIGINT", async () => {
-  console.log("Closing MongoDB connection...");
+const shutdown = async (signal) => {
+  console.log(`\n${signal} received. Shutting down...`);
 
-  await mongoose.connection.close();
+  try {
+    await mongoose.connection.close();
 
-  console.log("MongoDB disconnected");
-  process.exit(0);
-});
+    console.log("MongoDB disconnected");
 
-process.on("SIGTERM", async () => {
-  console.log("Closing MongoDB connection...");
+    process.exit(0);
+  } catch (error) {
+    console.error("Shutdown error:", error);
 
-  await mongoose.connection.close();
+    process.exit(1);
+  }
+};
 
-  console.log("MongoDB disconnected");
-  process.exit(0);
-});
+process.on("SIGINT", () => shutdown("SIGINT"));
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));

@@ -8,6 +8,9 @@ const categorySchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
     },
+    mainImage: {
+      type: String,
+    },
     featured: {
       type: Boolean,
       default: false,
