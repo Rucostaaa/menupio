@@ -184,14 +184,21 @@ const getMenus = async (req, res) => {
 // @desc    Update a menu
 // @route   PUT /api/menus/:id
 // @access  Private
+// =====================================================
+// UPDATE MENU
+// =====================================================
+
+// @desc    Update a menu
+// @route   PUT /api/menu/:id
+// @access  Private
 const updateMenu = async (req, res) => {
   let uploadedImage = null;
 
   try {
     if (!req.user) {
-      return res.status(400).json({
+      return res.status(401).json({
         success: false,
-        message: "User is not associated with a restaurant",
+        message: "Authentication required",
       });
     }
 
@@ -199,10 +206,7 @@ const updateMenu = async (req, res) => {
     // FIND MENU
     // =====================================================
 
-    const menu = await Menu.findOne({
-      _id: req.params.id,
-      user: req.user._id,
-    });
+    const menu = await Menu.findById(req.params.id);
 
     if (!menu) {
       return res.status(404).json({
@@ -212,12 +216,39 @@ const updateMenu = async (req, res) => {
     }
 
     // =====================================================
+    // FIND RESTAURANT
+    // =====================================================
+
+    const restaurant = await Restaurant.findById(menu.restaurant);
+
+    if (!restaurant) {
+      return res.status(404).json({
+        success: false,
+        message: "Restaurant not found",
+      });
+    }
+
+    // =====================================================
+    // CHECK OWNERSHIP
+    // =====================================================
+
+    const userId = String(req.user._id);
+    const ownerId = String(restaurant.owner);
+
+    if (userId !== ownerId) {
+      return res.status(403).json({
+        success: false,
+        message: "You do not have permission to update this menu",
+      });
+    }
+
+    // =====================================================
     // BASIC FIELDS
     // =====================================================
 
-    const { name, available, items, categories } = req.body;
+    const { name, available, items, categories, settings } = req.body;
 
-    if (name !== undefined && !name.trim()) {
+    if (name !== undefined && !String(name).trim()) {
       return res.status(400).json({
         success: false,
         message: "Menu name cannot be empty",
@@ -225,7 +256,7 @@ const updateMenu = async (req, res) => {
     }
 
     if (name !== undefined) {
-      menu.name = name.trim();
+      menu.name = String(name).trim();
     }
 
     if (available !== undefined) {
@@ -264,8 +295,25 @@ const updateMenu = async (req, res) => {
     }
 
     // =====================================================
+    // SETTINGS
+    // =====================================================
+
+    if (settings !== undefined) {
+      try {
+        menu.settings =
+          typeof settings === "string" ? JSON.parse(settings) : settings;
+      } catch {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid settings format",
+        });
+      }
+    }
+
+    // =====================================================
     // REPLACE MAIN IMAGE
     // =====================================================
+    console.log(req.file);
 
     if (req.file) {
       const oldImageUrl = menu.mainImage;
@@ -273,6 +321,7 @@ const updateMenu = async (req, res) => {
       const result = await cloudinary.uploader.upload(req.file.path, {
         folder: "menupio/menus",
       });
+      console.log("result url", result.secure_url);
 
       menu.mainImage = result.secure_url;
 
@@ -285,7 +334,7 @@ const updateMenu = async (req, res) => {
         }
       });
 
-      // Try to remove old Cloudinary image
+      // Remove old Cloudinary image
       if (oldImageUrl) {
         try {
           const publicId = extractCloudinaryPublicId(oldImageUrl);
@@ -322,7 +371,6 @@ const updateMenu = async (req, res) => {
     console.error("updateMenu error:", error);
 
     // Cleanup newly uploaded image
-    // if update failed.
     if (uploadedImage) {
       try {
         await cloudinary.uploader.destroy(uploadedImage);
@@ -331,7 +379,7 @@ const updateMenu = async (req, res) => {
       }
     }
 
-    // Cleanup local file if it still exists
+    // Cleanup local file
     if (req.file?.path) {
       fs.unlink(req.file.path, () => {});
     }
@@ -504,10 +552,6 @@ const getRestaurantMenus = async (req, res) => {
   try {
     const { restaurantId } = req.body;
 
-    console.log("BODY:", req.body);
-    console.log("restaurantId:", restaurantId);
-    console.log("type:", typeof restaurantId);
-
     // Validate restaurantId exists
     if (!restaurantId) {
       return res.status(400).json({
@@ -542,8 +586,6 @@ const getRestaurantMenus = async (req, res) => {
         createdAt: -1,
       });
 
-    console.log("MENUS:", menus);
-
     return res.status(200).json({
       success: true,
       count: menus.length,
@@ -574,6 +616,7 @@ const getMenu = async (req, res) => {
       .populate("items")
       .populate("categories")
       .populate("restaurant");
+    console.log(menu);
 
     if (!menu) {
       return res.status(404).json({

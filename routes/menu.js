@@ -18,8 +18,6 @@ const {
 |--------------------------------------------------------------------------
 */
 
-// Get all menus for authenticated restaurant
-// Create menu with optional main image
 router
   .route("/")
   .get(auth, getMenus)
@@ -31,7 +29,6 @@ router
 |--------------------------------------------------------------------------
 */
 
-// Public/private depending on your auth requirement
 router.route("/get-restaurant-menus").post(auth, getRestaurantMenus);
 
 /*
@@ -42,8 +39,8 @@ router.route("/get-restaurant-menus").post(auth, getRestaurantMenus);
 
 router
   .route("/:id")
-  .put(auth, updateMenu)
-  .delete(auth, deleteMenu)
-  .post(getMenu);
+  .get(auth, getMenu)
+  .put(auth, upload.single("mainImage"), updateMenu)
+  .delete(auth, deleteMenu);
 
 module.exports = router;

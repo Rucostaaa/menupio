@@ -1,3 +1,4 @@
+const cloudinary = require("../utils/Claudinary");
 const catchAsync = require("../utils/catchAsync");
 const Category = require("../models/Category");
 exports.createCategory = catchAsync(async (req, res) => {
@@ -125,4 +126,32 @@ exports.reorderCategories = catchAsync(async (req, res) => {
   res.json({
     success: true,
   });
+});
+exports.updateCategoryImage = catchAsync(async (req, res) => {
+  const { id } = req.params;
+  console.log(id);
+
+  const category = await Category.findById(id);
+
+  if (!category) {
+    return res.status(404).json({
+      message: "Category not found",
+    });
+  }
+
+  if (!req.file) {
+    return res.status(400).json({
+      message: "Please upload an image",
+    });
+  }
+
+  const result = await cloudinary.uploader.upload(req.file.path, {
+    folder: "categories",
+  });
+
+  category.image[0] = result.secure_url;
+
+  await category.save();
+
+  res.json(category);
 });

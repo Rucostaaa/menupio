@@ -68,3 +68,47 @@ exports.updateImage = catchAsync(async (req, res) => {
 
   res.json(product);
 });
+exports.bulkCreateMenuItems = async (req, res) => {
+  console.log(req.body);
+
+  try {
+    // Body MUST be an array
+    if (!Array.isArray(req.body)) {
+      return res.status(400).json({
+        message: "Request body must be an array of products.",
+      });
+    }
+
+    if (req.body.length === 0) {
+      return res.status(400).json({
+        message: "Products array cannot be empty.",
+      });
+    }
+
+    // Prepare products
+    const products = req.body.map((product) => ({
+      ...product,
+
+      // Never trust owner coming from the client
+      owner: req.user._id,
+
+      // If your auth user contains restaurantId, use it automatically
+      ...(req.user.restaurantId
+        ? {
+            restaurantId: req.user.restaurantId,
+          }
+        : {}),
+    }));
+
+    const createdProducts = await MenuItem.insertMany(products);
+
+    return res.status(201).json(createdProducts);
+  } catch (error) {
+    console.error("Bulk create menu items error:", error);
+
+    return res.status(500).json({
+      message: "Failed to create products.",
+      error: error.message,
+    });
+  }
+};
