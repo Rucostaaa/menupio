@@ -16,14 +16,6 @@ const PORT = process.env.PORT || 5000;
 |--------------------------------------------------------------------------
 | CORS
 |--------------------------------------------------------------------------
-|
-| IMPORTANT:
-| Do NOT use:
-|
-| app.use(cors());
-|
-| when the frontend uses credentials.
-|
 */
 
 const allowedOrigins = [
@@ -31,42 +23,18 @@ const allowedOrigins = [
   "http://127.0.0.1:5173",
   "https://menupio.pt",
 ];
-
 app.use(
   cors({
-    origin: function (origin, callback) {
-      // Allow requests without an Origin header
-      // such as Postman/server-side requests.
-      if (!origin) {
-        return callback(null, true);
-      }
-
-      if (allowedOrigins.includes(origin)) {
-        return callback(null, true);
-      }
-
-      console.warn("CORS blocked origin:", origin);
-
-      return callback(new Error(`CORS blocked origin: ${origin}`), false);
-    },
-
-    credentials: true,
-
+    origin: allowedOrigins,
+    credentials: false,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-
-    allowedHeaders: [
-      "Content-Type",
-      "Authorization",
-      "Accept",
-      "Origin",
-      "X-Requested-With",
-    ],
+    allowedHeaders: ["Content-Type", "Authorization"],
   }),
 );
 
 /*
 |--------------------------------------------------------------------------
-| Helmet
+| SECURITY / MIDDLEWARE
 |--------------------------------------------------------------------------
 */
 
@@ -76,32 +44,17 @@ app.use(
   }),
 );
 
-/*
-|--------------------------------------------------------------------------
-| General middleware
-|--------------------------------------------------------------------------
-*/
-
 app.use(compression());
 
 app.use(morgan("dev"));
 
-app.use(
-  express.json({
-    limit: "20mb",
-  }),
-);
+app.use(express.json({ limit: "20mb" }));
 
-app.use(
-  express.urlencoded({
-    extended: true,
-    limit: "20mb",
-  }),
-);
+app.use(express.urlencoded({ extended: true }));
 
 /*
 |--------------------------------------------------------------------------
-| Static uploads
+| STATIC UPLOADS
 |--------------------------------------------------------------------------
 */
 
@@ -109,7 +62,7 @@ app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 /*
 |--------------------------------------------------------------------------
-| Health
+| HEALTH CHECK
 |--------------------------------------------------------------------------
 */
 
@@ -133,7 +86,7 @@ app.get("/health", (req, res) => {
 
 /*
 |--------------------------------------------------------------------------
-| Routes
+| ROUTES
 |--------------------------------------------------------------------------
 */
 
@@ -147,25 +100,6 @@ app.use("/api/categories", require("./routes/category"));
 
 app.use("/api/products", require("./routes/menuItem"));
 
-/*
-|--------------------------------------------------------------------------
-| MENU ROUTES
-|--------------------------------------------------------------------------
-|
-| Frontend base URL:
-|
-| http://localhost:5000/api/menu
-|
-| Therefore the router itself should define:
-|
-| POST /
-| GET /
-| GET /:id
-| PUT /:id
-| DELETE /:id
-|
-*/
-
 app.use("/api/menu", require("./routes/menu"));
 
 /*
@@ -178,31 +112,17 @@ app.use((req, res) => {
   res.status(404).json({
     success: false,
     message: "Route not found",
-    path: req.originalUrl,
   });
 });
 
 /*
 |--------------------------------------------------------------------------
-| Global error handler
+| GLOBAL ERROR HANDLER
 |--------------------------------------------------------------------------
 */
 
 app.use((err, req, res, next) => {
-  console.error("GLOBAL ERROR:", err);
-
-  /*
-  |--------------------------------------------------------------------------
-  | CORS errors
-  |--------------------------------------------------------------------------
-  */
-
-  if (err.message?.startsWith("CORS blocked origin")) {
-    return res.status(403).json({
-      success: false,
-      message: err.message,
-    });
-  }
+  console.error("❌ SERVER ERROR:", err);
 
   res.status(err.statusCode || 500).json({
     success: false,
@@ -212,7 +132,7 @@ app.use((err, req, res, next) => {
 
 /*
 |--------------------------------------------------------------------------
-| MongoDB events
+| MONGODB EVENTS
 |--------------------------------------------------------------------------
 */
 
@@ -230,7 +150,7 @@ mongoose.connection.on("disconnected", () => {
 
 /*
 |--------------------------------------------------------------------------
-| MongoDB connection
+| MONGODB CONNECTION
 |--------------------------------------------------------------------------
 */
 
@@ -252,7 +172,7 @@ const connectMongoDB = async () => {
 
 /*
 |--------------------------------------------------------------------------
-| Start server
+| START SERVER
 |--------------------------------------------------------------------------
 */
 
@@ -264,7 +184,7 @@ app.listen(PORT, () => {
 
 /*
 |--------------------------------------------------------------------------
-| Graceful shutdown
+| GRACEFUL SHUTDOWN
 |--------------------------------------------------------------------------
 */
 

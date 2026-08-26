@@ -129,7 +129,6 @@ exports.reorderCategories = catchAsync(async (req, res) => {
 });
 exports.updateCategoryImage = catchAsync(async (req, res) => {
   const { id } = req.params;
-  console.log(id);
 
   const category = await Category.findById(id);
 
@@ -145,11 +144,24 @@ exports.updateCategoryImage = catchAsync(async (req, res) => {
     });
   }
 
-  const result = await cloudinary.uploader.upload(req.file.path, {
-    folder: "categories",
+  const result = await new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      {
+        folder: "categories",
+      },
+      (error, result) => {
+        if (error) {
+          reject(error);
+        } else {
+          resolve(result);
+        }
+      },
+    );
+
+    stream.end(req.file.buffer);
   });
 
-  category.image[0] = result.secure_url;
+  category.image = [result.secure_url];
 
   await category.save();
 
