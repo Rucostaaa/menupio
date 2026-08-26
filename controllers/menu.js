@@ -19,15 +19,6 @@ const createMenu = async (req, res) => {
     const { name, type, available, settings, items, categories, restaurantId } =
       req.body;
 
-    console.log("CREATE MENU BODY:", {
-      name,
-      type,
-      items,
-      settings,
-      available,
-      restaurantId,
-    });
-
     /*
     |--------------------------------------------------------------------------
     | VALIDATE NAME
@@ -439,7 +430,6 @@ const updateMenu = async (req, res) => {
     // =====================================================
     // REPLACE MAIN IMAGE
     // =====================================================
-    console.log(req.file);
 
     if (req.file) {
       const oldImageUrl = menu.mainImage;
@@ -447,7 +437,6 @@ const updateMenu = async (req, res) => {
       const result = await cloudinary.uploader.upload(req.file.path, {
         folder: "menupio/menus",
       });
-      console.log("result url", result.secure_url);
 
       menu.mainImage = result.secure_url;
 
@@ -550,7 +539,6 @@ const deleteMenu = async (req, res) => {
     // =====================================================
 
     const restaurant = await Restaurant.findById(menu.restaurant);
-    console.log(restaurant, userId);
 
     if (!restaurant) {
       return res.status(404).json({
@@ -728,6 +716,8 @@ const getRestaurantMenus = async (req, res) => {
   }
 };
 const getMenu = async (req, res) => {
+  console.log("getMenu");
+
   try {
     const { id } = req.params;
 
@@ -742,7 +732,6 @@ const getMenu = async (req, res) => {
       .populate("items")
       .populate("categories")
       .populate("restaurant");
-    console.log(menu);
 
     if (!menu) {
       return res.status(404).json({
@@ -756,6 +745,7 @@ const getMenu = async (req, res) => {
       menu,
     });
   } catch (error) {
+    console.log(error.message);
     console.error("Get menu error:", error);
 
     return res.status(500).json({
