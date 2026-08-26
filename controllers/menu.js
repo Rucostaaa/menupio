@@ -19,7 +19,21 @@ const createMenu = async (req, res) => {
     const { name, type, available, settings, items, categories, restaurantId } =
       req.body;
 
-    // Validate name
+    console.log("CREATE MENU BODY:", {
+      name,
+      type,
+      items,
+      settings,
+      available,
+      restaurantId,
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | VALIDATE NAME
+    |--------------------------------------------------------------------------
+    */
+
     if (!name || !name.trim()) {
       return res.status(400).json({
         success: false,
@@ -27,7 +41,12 @@ const createMenu = async (req, res) => {
       });
     }
 
-    // Validate restaurant
+    /*
+    |--------------------------------------------------------------------------
+    | VALIDATE USER
+    |--------------------------------------------------------------------------
+    */
+
     if (!req.user) {
       return res.status(400).json({
         success: false,
@@ -35,36 +54,28 @@ const createMenu = async (req, res) => {
       });
     }
 
-    // =====================================================
-    // UPLOAD IMAGE
-    // =====================================================
+    /*
+    |--------------------------------------------------------------------------
+    | VALIDATE RESTAURANT
+    |--------------------------------------------------------------------------
+    */
 
-    let mainImage = null;
-
-    if (req.file) {
-      const result = await cloudinary.uploader.upload(req.file.path, {
-        folder: "menupio/menus",
-      });
-
-      mainImage = result.secure_url;
-
-      // Keep public_id so we can delete the image later
-      uploadedImage = result.public_id;
-
-      // Remove temporary local file
-      fs.unlink(req.file.path, (error) => {
-        if (error) {
-          console.error("Failed to remove local file:", error);
-        }
+    if (!restaurantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Restaurant is required",
       });
     }
 
-    // =====================================================
-    // PARSE ITEMS / CATEGORIES
-    // =====================================================
+    /*
+    |--------------------------------------------------------------------------
+    | PARSE ITEMS / CATEGORIES
+    |--------------------------------------------------------------------------
+    */
 
     let parsedItems = [];
     let parsedCategories = [];
+    let parsedSettings = {};
 
     try {
       parsedItems = typeof items === "string" ? JSON.parse(items) : items || [];
@@ -73,16 +84,86 @@ const createMenu = async (req, res) => {
         typeof categories === "string"
           ? JSON.parse(categories)
           : categories || [];
+
+      parsedSettings =
+        typeof settings === "string" ? JSON.parse(settings) : settings || {};
     } catch (error) {
+      console.error("JSON parse error:", error);
+
       return res.status(400).json({
         success: false,
-        message: "Invalid items or categories format",
+        message: "Invalid items, categories or settings format",
       });
     }
 
-    // =====================================================
-    // CREATE
-    // =====================================================
+    /*
+    |--------------------------------------------------------------------------
+    | UPLOAD IMAGE
+    |--------------------------------------------------------------------------
+    */
+
+    let mainImage = null;
+
+    if (type === "static" && req.file) {
+      const result = await cloudinary.uploader.upload(req.file.path, {
+        folder: "menupio/menus",
+      });
+
+      mainImage = result.secure_url;
+
+      uploadedImage = result.public_id;
+
+      fs.unlink(req.file.path, (error) => {
+        if (error) {
+          console.error("Failed to remove local file:", error);
+        }
+      });
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | EMENTA FRAME IMAGE
+    |--------------------------------------------------------------------------
+    |
+    | If you upload one file for the ementa,
+    | use it as the custom frame image.
+    |
+    */
+
+    if (type === "ementa" && req.file) {
+      const result = await cloudinary.uploader.upload(req.file.path, {
+        folder: "menupio/frames",
+      });
+
+      /*
+      |----------------------------------------------------------------------
+      | Do not mutate pageFrames incorrectly.
+      |
+      | Store the uploaded image in the settings.
+      |----------------------------------------------------------------------
+      */
+
+      parsedSettings = {
+        ...parsedSettings,
+
+        customFrameImage: result.secure_url,
+      };
+
+      uploadedImage = result.public_id;
+
+      fs.unlink(req.file.path, (error) => {
+        if (error) {
+          console.error("Failed to remove local file:", error);
+        }
+      });
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | SLUG
+    |--------------------------------------------------------------------------
+    */
+
     const slug = name
       .trim()
       .toLowerCase()
@@ -91,42 +172,79 @@ const createMenu = async (req, res) => {
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, "");
 
+    /*
+    |--------------------------------------------------------------------------
+    | CREATE MENU
+    |--------------------------------------------------------------------------
+    */
+
     const menu = await Menu.create({
       user: req.user._id,
 
       name: name.trim(),
-      slug: slug,
+
+      slug,
+
       ownId: 0,
+
       mainImage,
-      type: type,
+
+      type,
+
       available:
         available === undefined
           ? true
           : available === "true" || available === true,
-      settings: settings,
+
+      settings: parsedSettings,
+
       items: parsedItems,
+
+      /*
+      |--------------------------------------------------------------------------
+      | IMPORTANT
+      |--------------------------------------------------------------------------
+      | This is the MongoDB restaurant relationship.
+      */
+
       restaurant: restaurantId,
+
       categories: parsedCategories,
     });
 
-    // =====================================================
-    // POPULATE
-    // =====================================================
+    /*
+    |--------------------------------------------------------------------------
+    | POPULATE
+    |--------------------------------------------------------------------------
+    */
 
     const populatedMenu = await Menu.findById(menu._id)
       .populate("items")
-      .populate("categories");
+      .populate("categories")
+      .populate("restaurant");
+
+    /*
+    |--------------------------------------------------------------------------
+    | RESPONSE
+    |--------------------------------------------------------------------------
+    */
 
     return res.status(201).json({
       success: true,
+
       message: "Menu created successfully",
+
       menu: populatedMenu,
     });
   } catch (error) {
     console.error("createMenu error:", error);
 
-    // If MongoDB creation failed after Cloudinary
-    // upload, remove the orphaned Cloudinary image.
+    /*
+    |--------------------------------------------------------------------------
+    | CLOUDINARY CLEANUP
+    |--------------------------------------------------------------------------
+    */
+
     if (uploadedImage) {
       try {
         await cloudinary.uploader.destroy(uploadedImage);
@@ -135,9 +253,17 @@ const createMenu = async (req, res) => {
       }
     }
 
+    /*
+    |--------------------------------------------------------------------------
+    | RESPONSE
+    |--------------------------------------------------------------------------
+    */
+
     return res.status(500).json({
       success: false,
+
       message: "Failed to create menu",
+
       error: error.message,
     });
   }

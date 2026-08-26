@@ -39,7 +39,7 @@ router.route("/get-restaurant-menus").post(auth, getRestaurantMenus);
 
 router
   .route("/:id")
-  .get(auth, getMenu)
+  .get(getMenu)
   .put(auth, upload.single("mainImage"), updateMenu)
   .delete(auth, deleteMenu);
 
