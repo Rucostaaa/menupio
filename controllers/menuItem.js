@@ -42,7 +42,8 @@ exports.deleteMenuItem = catchAsync(async (req, res) => {
 });
 exports.updateImage = catchAsync(async (req, res) => {
   const { id } = req.params;
-  console.log(id);
+
+  console.log("PRODUCT ID:", id);
 
   const product = await MenuItem.findById(id);
 
@@ -58,57 +59,26 @@ exports.updateImage = catchAsync(async (req, res) => {
     });
   }
 
-  const result = await cloudinary.uploader.upload(req.file.path, {
-    folder: "products",
+  const result = await new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      {
+        folder: "products",
+      },
+      (error, result) => {
+        if (error) {
+          reject(error);
+        } else {
+          resolve(result);
+        }
+      },
+    );
+
+    stream.end(req.file.buffer);
   });
 
-  product.image[0] = result.secure_url;
+  product.image = [result.secure_url];
 
   await product.save();
 
   res.json(product);
 });
-exports.bulkCreateMenuItems = async (req, res) => {
-  console.log(req.body);
-
-  try {
-    // Body MUST be an array
-    if (!Array.isArray(req.body)) {
-      return res.status(400).json({
-        message: "Request body must be an array of products.",
-      });
-    }
-
-    if (req.body.length === 0) {
-      return res.status(400).json({
-        message: "Products array cannot be empty.",
-      });
-    }
-
-    // Prepare products
-    const products = req.body.map((product) => ({
-      ...product,
-
-      // Never trust owner coming from the client
-      owner: req.user._id,
-
-      // If your auth user contains restaurantId, use it automatically
-      ...(req.user.restaurantId
-        ? {
-            restaurantId: req.user.restaurantId,
-          }
-        : {}),
-    }));
-
-    const createdProducts = await MenuItem.insertMany(products);
-
-    return res.status(201).json(createdProducts);
-  } catch (error) {
-    console.error("Bulk create menu items error:", error);
-
-    return res.status(500).json({
-      message: "Failed to create products.",
-      error: error.message,
-    });
-  }
-};
