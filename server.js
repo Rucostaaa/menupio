@@ -101,6 +101,7 @@ app.use("/api/categories", require("./routes/category"));
 app.use("/api/products", require("./routes/menuItem"));
 
 app.use("/api/menu", require("./routes/menu"));
+app.use("/api/admin", require("./routes/admin"));
 
 /*
 |--------------------------------------------------------------------------
