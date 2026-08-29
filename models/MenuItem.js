@@ -23,6 +23,12 @@ const menuItemSchema = new mongoose.Schema(
     ingredients: [String],
 
     allergens: [String],
+    promo: {
+      status: Boolean,
+      text: String,
+      price: Number,
+    },
+
     owner: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
