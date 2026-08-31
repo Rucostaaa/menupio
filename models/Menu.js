@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const { type } = require("node:os");
 
 const menuSchema = new mongoose.Schema(
   {
@@ -21,6 +22,7 @@ const menuSchema = new mongoose.Schema(
       type: Number,
       required: true,
     },
+    whatsAppButton: { type: Boolean, default: false },
     mainImage: {
       type: String,
       default: null,

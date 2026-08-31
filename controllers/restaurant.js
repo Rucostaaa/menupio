@@ -140,6 +140,7 @@ exports.updateRestaurant = catchAsync(async (req, res) => {
     instagram,
     whatsAppNumber,
   } = req.body;
+  console.log(whatsAppNumber);
 
   // ==========================================================
   // BASIC INFORMATION

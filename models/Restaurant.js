@@ -24,7 +24,7 @@ const restaurantSchema = new mongoose.Schema(
     coverImage: String,
     footerMessage: String,
     mainImage: String,
-
+    since: Number,
     openingHours: Object,
     facebook: String,
     instagram: String,
