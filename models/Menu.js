@@ -25,7 +25,10 @@ const menuSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
-
+    headerImage: {
+      type: String,
+      default: null,
+    },
     items: [
       {
         type: mongoose.Schema.Types.ObjectId,

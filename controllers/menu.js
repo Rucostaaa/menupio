@@ -1,9 +1,126 @@
-const fs = require("fs");
 const Menu = require("../models/Menu");
 const Restaurant = require("../models/Restaurant");
 
 const cloudinary = require("../utils/Claudinary");
-const { default: mongoose } = require("mongoose");
+const mongoose = require("mongoose");
+
+// =====================================================
+// CLOUDINARY UPLOAD HELPER
+// =====================================================
+
+const uploadBufferToCloudinary = (buffer, options = {}) => {
+  return new Promise((resolve, reject) => {
+    if (!buffer) {
+      return reject(new Error("Image buffer is missing"));
+    }
+
+    const uploadStream = cloudinary.uploader.upload_stream(
+      {
+        resource_type: "image",
+        ...options,
+      },
+      (error, result) => {
+        if (error) {
+          return reject(error);
+        }
+
+        resolve(result);
+      },
+    );
+
+    uploadStream.end(buffer);
+  });
+};
+
+// =====================================================
+// CLOUDINARY PUBLIC ID HELPER
+// =====================================================
+
+const extractCloudinaryPublicId = (imageUrl) => {
+  try {
+    if (!imageUrl) {
+      return null;
+    }
+
+    const url = new URL(imageUrl);
+
+    const parts = url.pathname.split("/");
+
+    const uploadIndex = parts.indexOf("upload");
+
+    if (uploadIndex === -1) {
+      return null;
+    }
+
+    // Everything after /upload/
+    let pathParts = parts.slice(uploadIndex + 1);
+
+    // Remove transformations
+    //
+    // Examples:
+    // c_fill,w_500
+    // c_fill
+    // w_500
+    // h_500
+    //
+    while (
+      pathParts.length &&
+      (pathParts[0].includes("_") ||
+        pathParts[0].startsWith("c_") ||
+        pathParts[0].startsWith("w_") ||
+        pathParts[0].startsWith("h_"))
+    ) {
+      pathParts.shift();
+    }
+
+    // Remove Cloudinary version
+    //
+    // Example:
+    // v123456789
+    //
+    if (pathParts[0]?.startsWith("v")) {
+      pathParts.shift();
+    }
+
+    if (!pathParts.length) {
+      return null;
+    }
+
+    const filename = pathParts.pop();
+
+    const filenameWithoutExtension = filename.replace(/\.[^/.]+$/, "");
+
+    pathParts.push(filenameWithoutExtension);
+
+    return pathParts.join("/");
+  } catch (error) {
+    console.error("extractCloudinaryPublicId error:", error);
+
+    return null;
+  }
+};
+
+// =====================================================
+// DELETE CLOUDINARY IMAGE
+// =====================================================
+
+const deleteCloudinaryImage = async (imageUrl) => {
+  if (!imageUrl) {
+    return;
+  }
+
+  try {
+    const publicId = extractCloudinaryPublicId(imageUrl);
+
+    if (!publicId) {
+      return;
+    }
+
+    await cloudinary.uploader.destroy(publicId);
+  } catch (error) {
+    console.error("Failed to delete Cloudinary image:", error);
+  }
+};
 
 // =====================================================
 // CREATE MENU
@@ -12,44 +129,43 @@ const { default: mongoose } = require("mongoose");
 // @desc    Create a menu
 // @route   POST /api/menus
 // @access  Private
+
 const createMenu = async (req, res) => {
   let uploadedImage = null;
 
   try {
+    // =====================================================
+    // AUTHENTICATION
+    // =====================================================
+
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        message: "Authentication required",
+      });
+    }
+
+    // =====================================================
+    // BODY
+    // =====================================================
+
     const { name, type, available, settings, items, categories, restaurantId } =
       req.body;
 
-    /*
-    |--------------------------------------------------------------------------
-    | VALIDATE NAME
-    |--------------------------------------------------------------------------
-    */
+    // =====================================================
+    // VALIDATE NAME
+    // =====================================================
 
-    if (!name || !name.trim()) {
+    if (!name || !String(name).trim()) {
       return res.status(400).json({
         success: false,
         message: "Menu name is required",
       });
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | VALIDATE USER
-    |--------------------------------------------------------------------------
-    */
-
-    if (!req.user) {
-      return res.status(400).json({
-        success: false,
-        message: "User is not associated with a restaurant",
-      });
-    }
-
-    /*
-    |--------------------------------------------------------------------------
-    | VALIDATE RESTAURANT
-    |--------------------------------------------------------------------------
-    */
+    // =====================================================
+    // VALIDATE RESTAURANT
+    // =====================================================
 
     if (!restaurantId) {
       return res.status(400).json({
@@ -58,11 +174,44 @@ const createMenu = async (req, res) => {
       });
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | PARSE ITEMS / CATEGORIES
-    |--------------------------------------------------------------------------
-    */
+    if (!mongoose.Types.ObjectId.isValid(restaurantId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid restaurant ID",
+      });
+    }
+
+    // =====================================================
+    // VERIFY RESTAURANT
+    // =====================================================
+
+    const restaurant = await Restaurant.findById(restaurantId);
+
+    if (!restaurant) {
+      return res.status(404).json({
+        success: false,
+        message: "Restaurant not found",
+      });
+    }
+
+    // =====================================================
+    // CHECK RESTAURANT OWNERSHIP
+    // =====================================================
+
+    if (
+      !restaurant.owner ||
+      String(restaurant.owner) !== String(req.user._id)
+    ) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "You do not have permission to create a menu for this restaurant",
+      });
+    }
+
+    // =====================================================
+    // PARSE ITEMS / CATEGORIES / SETTINGS
+    // =====================================================
 
     let parsedItems = [];
     let parsedCategories = [];
@@ -87,75 +236,62 @@ const createMenu = async (req, res) => {
       });
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | UPLOAD IMAGE
-    |--------------------------------------------------------------------------
-    */
+    // =====================================================
+    // IMAGE
+    // =====================================================
 
     let mainImage = null;
 
+    // -----------------------------------------------------
+    // STATIC MENU IMAGE
+    // -----------------------------------------------------
+
     if (type === "static" && req.file) {
-      const result = await cloudinary.uploader.upload(req.file.path, {
+      if (!req.file.buffer) {
+        return res.status(400).json({
+          success: false,
+          message: "Uploaded image buffer is missing",
+        });
+      }
+
+      const result = await uploadBufferToCloudinary(req.file.buffer, {
         folder: "menupio/menus",
       });
 
       mainImage = result.secure_url;
 
       uploadedImage = result.public_id;
-
-      fs.unlink(req.file.path, (error) => {
-        if (error) {
-          console.error("Failed to remove local file:", error);
-        }
-      });
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | EMENTA FRAME IMAGE
-    |--------------------------------------------------------------------------
-    |
-    | If you upload one file for the ementa,
-    | use it as the custom frame image.
-    |
-    */
+    // -----------------------------------------------------
+    // EMENTA FRAME IMAGE
+    // -----------------------------------------------------
 
     if (type === "ementa" && req.file) {
-      const result = await cloudinary.uploader.upload(req.file.path, {
+      if (!req.file.buffer) {
+        return res.status(400).json({
+          success: false,
+          message: "Uploaded image buffer is missing",
+        });
+      }
+
+      const result = await uploadBufferToCloudinary(req.file.buffer, {
         folder: "menupio/frames",
       });
 
-      /*
-      |----------------------------------------------------------------------
-      | Do not mutate pageFrames incorrectly.
-      |
-      | Store the uploaded image in the settings.
-      |----------------------------------------------------------------------
-      */
-
       parsedSettings = {
         ...parsedSettings,
-
         customFrameImage: result.secure_url,
       };
 
       uploadedImage = result.public_id;
-
-      fs.unlink(req.file.path, (error) => {
-        if (error) {
-          console.error("Failed to remove local file:", error);
-        }
-      });
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | SLUG
-    |--------------------------------------------------------------------------
-    */
+    // =====================================================
+    // SLUG
+    // =====================================================
 
-    const slug = name
+    const slug = String(name)
       .trim()
       .toLowerCase()
       .normalize("NFD")
@@ -163,16 +299,14 @@ const createMenu = async (req, res) => {
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, "");
 
-    /*
-    |--------------------------------------------------------------------------
-    | CREATE MENU
-    |--------------------------------------------------------------------------
-    */
+    // =====================================================
+    // CREATE MENU
+    // =====================================================
 
     const menu = await Menu.create({
       user: req.user._id,
 
-      name: name.trim(),
+      name: String(name).trim(),
 
       slug,
 
@@ -191,50 +325,35 @@ const createMenu = async (req, res) => {
 
       items: parsedItems,
 
-      /*
-      |--------------------------------------------------------------------------
-      | IMPORTANT
-      |--------------------------------------------------------------------------
-      | This is the MongoDB restaurant relationship.
-      */
-
       restaurant: restaurantId,
 
       categories: parsedCategories,
     });
 
-    /*
-    |--------------------------------------------------------------------------
-    | POPULATE
-    |--------------------------------------------------------------------------
-    */
+    // =====================================================
+    // POPULATE
+    // =====================================================
 
     const populatedMenu = await Menu.findById(menu._id)
       .populate("items")
       .populate("categories")
       .populate("restaurant");
 
-    /*
-    |--------------------------------------------------------------------------
-    | RESPONSE
-    |--------------------------------------------------------------------------
-    */
+    // =====================================================
+    // SUCCESS
+    // =====================================================
 
     return res.status(201).json({
       success: true,
-
       message: "Menu created successfully",
-
       menu: populatedMenu,
     });
   } catch (error) {
     console.error("createMenu error:", error);
 
-    /*
-    |--------------------------------------------------------------------------
-    | CLOUDINARY CLEANUP
-    |--------------------------------------------------------------------------
-    */
+    // =====================================================
+    // CLEANUP UPLOADED IMAGE
+    // =====================================================
 
     if (uploadedImage) {
       try {
@@ -244,30 +363,42 @@ const createMenu = async (req, res) => {
       }
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | RESPONSE
-    |--------------------------------------------------------------------------
-    */
+    // =====================================================
+    // ERROR
+    // =====================================================
 
     return res.status(500).json({
       success: false,
-
       message: "Failed to create menu",
-
       error: error.message,
     });
   }
 };
+
+// =====================================================
+// GET MENUS
+// =====================================================
+
+// @desc    Get authenticated user's menus
+// @route   GET /api/menus
+// @access  Private
+
 const getMenus = async (req, res) => {
   try {
-    // Make sure we have an authenticated restaurant
+    // =====================================================
+    // AUTH
+    // =====================================================
+
     if (!req.user?._id) {
       return res.status(401).json({
         success: false,
         message: "Authentication required",
       });
     }
+
+    // =====================================================
+    // FIND MENUS
+    // =====================================================
 
     const menus = await Menu.find({
       user: req.user._id,
@@ -278,6 +409,10 @@ const getMenus = async (req, res) => {
       .sort({
         createdAt: -1,
       });
+
+    // =====================================================
+    // RESPONSE
+    // =====================================================
 
     return res.status(200).json({
       success: true,
@@ -294,6 +429,76 @@ const getMenus = async (req, res) => {
     });
   }
 };
+
+// =====================================================
+// GET SINGLE MENU
+// =====================================================
+
+// @desc    Get a menu
+// @route   GET /api/menus/:id
+// @access  Public / Private
+
+const getMenu = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // =====================================================
+    // VALIDATE ID
+    // =====================================================
+
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message: "Menu ID is required",
+      });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid menu ID",
+      });
+    }
+
+    // =====================================================
+    // FIND MENU
+    // =====================================================
+
+    const menu = await Menu.findById(id)
+      .populate("items")
+      .populate("categories")
+      .populate("restaurant");
+
+    // =====================================================
+    // NOT FOUND
+    // =====================================================
+
+    if (!menu) {
+      return res.status(404).json({
+        success: false,
+        message: "Menu not found",
+      });
+    }
+
+    // =====================================================
+    // RESPONSE
+    // =====================================================
+
+    return res.status(200).json({
+      success: true,
+      menu,
+    });
+  } catch (error) {
+    console.error("getMenu error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to get menu",
+      error: error.message,
+    });
+  }
+};
+
 // =====================================================
 // UPDATE MENU
 // =====================================================
@@ -301,17 +506,15 @@ const getMenus = async (req, res) => {
 // @desc    Update a menu
 // @route   PUT /api/menus/:id
 // @access  Private
-// =====================================================
-// UPDATE MENU
-// =====================================================
 
-// @desc    Update a menu
-// @route   PUT /api/menu/:id
-// @access  Private
 const updateMenu = async (req, res) => {
   let uploadedImage = null;
 
   try {
+    // =====================================================
+    // AUTHENTICATION
+    // =====================================================
+
     if (!req.user) {
       return res.status(401).json({
         success: false,
@@ -320,10 +523,30 @@ const updateMenu = async (req, res) => {
     }
 
     // =====================================================
+    // VALIDATE MENU ID
+    // =====================================================
+
+    const { id } = req.params;
+
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message: "Menu ID is required",
+      });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid menu ID",
+      });
+    }
+
+    // =====================================================
     // FIND MENU
     // =====================================================
 
-    const menu = await Menu.findById(req.params.id);
+    const menu = await Menu.findById(id);
 
     if (!menu) {
       return res.status(404).json({
@@ -360,10 +583,14 @@ const updateMenu = async (req, res) => {
     }
 
     // =====================================================
-    // BASIC FIELDS
+    // BODY
     // =====================================================
 
-    const { name, available, items, categories, settings } = req.body;
+    const { name, available, items, categories, settings, type } = req.body;
+
+    // =====================================================
+    // NAME
+    // =====================================================
 
     if (name !== undefined && !String(name).trim()) {
       return res.status(400).json({
@@ -374,7 +601,31 @@ const updateMenu = async (req, res) => {
 
     if (name !== undefined) {
       menu.name = String(name).trim();
+
+      // ---------------------------------------------------
+      // UPDATE SLUG WHEN NAME CHANGES
+      // ---------------------------------------------------
+
+      menu.slug = String(name)
+        .trim()
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "");
     }
+
+    // =====================================================
+    // TYPE
+    // =====================================================
+
+    if (type !== undefined) {
+      menu.type = type;
+    }
+
+    // =====================================================
+    // AVAILABLE
+    // =====================================================
 
     if (available !== undefined) {
       menu.available = available === "true" || available === true;
@@ -387,7 +638,7 @@ const updateMenu = async (req, res) => {
     if (items !== undefined) {
       try {
         menu.items = typeof items === "string" ? JSON.parse(items) : items;
-      } catch {
+      } catch (error) {
         return res.status(400).json({
           success: false,
           message: "Invalid items format",
@@ -403,7 +654,7 @@ const updateMenu = async (req, res) => {
       try {
         menu.categories =
           typeof categories === "string" ? JSON.parse(categories) : categories;
-      } catch {
+      } catch (error) {
         return res.status(400).json({
           success: false,
           message: "Invalid categories format",
@@ -417,9 +668,16 @@ const updateMenu = async (req, res) => {
 
     if (settings !== undefined) {
       try {
-        menu.settings =
+        const parsedSettings =
           typeof settings === "string" ? JSON.parse(settings) : settings;
-      } catch {
+
+        menu.settings = {
+          ...(menu.settings?.toObject
+            ? menu.settings.toObject()
+            : menu.settings || {}),
+          ...(parsedSettings || {}),
+        };
+      } catch (error) {
         return res.status(400).json({
           success: false,
           message: "Invalid settings format",
@@ -432,34 +690,41 @@ const updateMenu = async (req, res) => {
     // =====================================================
 
     if (req.file) {
+      // ---------------------------------------------------
+      // CHECK BUFFER
+      // ---------------------------------------------------
+
+      if (!req.file.buffer) {
+        return res.status(400).json({
+          success: false,
+          message: "Uploaded image buffer is missing",
+        });
+      }
+
       const oldImageUrl = menu.mainImage;
 
-      const result = await cloudinary.uploader.upload(req.file.path, {
+      // ---------------------------------------------------
+      // UPLOAD NEW IMAGE
+      // ---------------------------------------------------
+
+      const result = await uploadBufferToCloudinary(req.file.buffer, {
         folder: "menupio/menus",
       });
+
+      // ---------------------------------------------------
+      // SAVE NEW IMAGE
+      // ---------------------------------------------------
 
       menu.mainImage = result.secure_url;
 
       uploadedImage = result.public_id;
 
-      // Remove local file
-      fs.unlink(req.file.path, (error) => {
-        if (error) {
-          console.error("Failed to remove local file:", error);
-        }
-      });
+      // ---------------------------------------------------
+      // DELETE OLD IMAGE
+      // ---------------------------------------------------
 
-      // Remove old Cloudinary image
-      if (oldImageUrl) {
-        try {
-          const publicId = extractCloudinaryPublicId(oldImageUrl);
-
-          if (publicId) {
-            await cloudinary.uploader.destroy(publicId);
-          }
-        } catch (error) {
-          console.error("Failed to remove old Cloudinary image:", error);
-        }
+      if (oldImageUrl && oldImageUrl !== result.secure_url) {
+        await deleteCloudinaryImage(oldImageUrl);
       }
     }
 
@@ -475,7 +740,12 @@ const updateMenu = async (req, res) => {
 
     const populatedMenu = await Menu.findById(menu._id)
       .populate("items")
-      .populate("categories");
+      .populate("categories")
+      .populate("restaurant");
+
+    // =====================================================
+    // SUCCESS
+    // =====================================================
 
     return res.status(200).json({
       success: true,
@@ -485,7 +755,10 @@ const updateMenu = async (req, res) => {
   } catch (error) {
     console.error("updateMenu error:", error);
 
-    // Cleanup newly uploaded image
+    // =====================================================
+    // CLEANUP NEW IMAGE
+    // =====================================================
+
     if (uploadedImage) {
       try {
         await cloudinary.uploader.destroy(uploadedImage);
@@ -494,10 +767,9 @@ const updateMenu = async (req, res) => {
       }
     }
 
-    // Cleanup local file
-    if (req.file?.path) {
-      fs.unlink(req.file.path, () => {});
-    }
+    // =====================================================
+    // ERROR
+    // =====================================================
 
     return res.status(500).json({
       success: false,
@@ -506,6 +778,15 @@ const updateMenu = async (req, res) => {
     });
   }
 };
+
+// =====================================================
+// DELETE MENU
+// =====================================================
+
+// @desc    Delete a menu
+// @route   DELETE /api/menus/:id
+// @access  Private
+
 const deleteMenu = async (req, res) => {
   try {
     // =====================================================
@@ -519,13 +800,33 @@ const deleteMenu = async (req, res) => {
       });
     }
 
-    const userId = req.user.id;
+    const userId = req.user._id;
+
+    // =====================================================
+    // VALIDATE ID
+    // =====================================================
+
+    const { id } = req.params;
+
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message: "Menu ID is required",
+      });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid menu ID",
+      });
+    }
 
     // =====================================================
     // FIND MENU
     // =====================================================
 
-    const menu = await Menu.findById(req.params.id);
+    const menu = await Menu.findById(id);
 
     if (!menu) {
       return res.status(404).json({
@@ -551,10 +852,7 @@ const deleteMenu = async (req, res) => {
     // CHECK OWNERSHIP
     // =====================================================
 
-    if (
-      !restaurant.owner ||
-      restaurant.owner.toString() !== userId.toString()
-    ) {
+    if (!restaurant.owner || String(restaurant.owner) !== String(userId)) {
       return res.status(403).json({
         success: false,
         message: "You do not have permission to delete this menu",
@@ -562,21 +860,11 @@ const deleteMenu = async (req, res) => {
     }
 
     // =====================================================
-    // DELETE CLOUDINARY IMAGE
+    // DELETE MAIN IMAGE
     // =====================================================
 
     if (menu.mainImage) {
-      try {
-        const publicId = extractCloudinaryPublicId(menu.mainImage);
-
-        if (publicId) {
-          await cloudinary.uploader.destroy(publicId);
-        }
-      } catch (error) {
-        console.error("Failed to delete Cloudinary image:", error);
-
-        // We don't stop the menu deletion if Cloudinary fails.
-      }
+      await deleteCloudinaryImage(menu.mainImage);
     }
 
     // =====================================================
@@ -608,65 +896,21 @@ const deleteMenu = async (req, res) => {
 };
 
 // =====================================================
-// CLOUDINARY PUBLIC ID HELPER
+// GET RESTAURANT MENUS
 // =====================================================
 
-const extractCloudinaryPublicId = (imageUrl) => {
-  try {
-    const url = new URL(imageUrl);
-
-    const parts = url.pathname.split("/");
-
-    const uploadIndex = parts.indexOf("upload");
-
-    if (uploadIndex === -1) {
-      return null;
-    }
-
-    // Everything after /upload/
-    let pathParts = parts.slice(uploadIndex + 1);
-
-    // Remove transformations
-    // e.g. /c_fill,w_500/...
-    while (
-      pathParts.length &&
-      (pathParts[0].includes("_") ||
-        pathParts[0].startsWith("c_") ||
-        pathParts[0].startsWith("w_") ||
-        pathParts[0].startsWith("h_"))
-    ) {
-      pathParts.shift();
-    }
-
-    // Remove version
-    // e.g. v123456789
-    if (pathParts[0]?.startsWith("v")) {
-      pathParts.shift();
-    }
-
-    if (!pathParts.length) {
-      return null;
-    }
-
-    const filename = pathParts.pop();
-
-    const filenameWithoutExtension = filename.replace(/\.[^/.]+$/, "");
-
-    pathParts.push(filenameWithoutExtension);
-
-    return pathParts.join("/");
-  } catch (error) {
-    console.error("extractCloudinaryPublicId error:", error);
-
-    return null;
-  }
-};
+// @desc    Get menus belonging to a restaurant
+// @route   POST /api/menus/restaurant
+// @access  Private
 
 const getRestaurantMenus = async (req, res) => {
   try {
     const { restaurantId } = req.body;
 
-    // Validate restaurantId exists
+    // =====================================================
+    // VALIDATE RESTAURANT ID
+    // =====================================================
+
     if (!restaurantId) {
       return res.status(400).json({
         success: false,
@@ -674,7 +918,6 @@ const getRestaurantMenus = async (req, res) => {
       });
     }
 
-    // Validate ObjectId
     if (!mongoose.Types.ObjectId.isValid(restaurantId)) {
       return res.status(400).json({
         success: false,
@@ -682,13 +925,20 @@ const getRestaurantMenus = async (req, res) => {
       });
     }
 
-    // Optional authentication check
+    // =====================================================
+    // AUTH
+    // =====================================================
+
     if (!req.user?._id) {
       return res.status(401).json({
         success: false,
         message: "Authentication required",
       });
     }
+
+    // =====================================================
+    // FIND MENUS
+    // =====================================================
 
     const menus = await Menu.find({
       restaurant: restaurantId,
@@ -699,6 +949,10 @@ const getRestaurantMenus = async (req, res) => {
       .sort({
         createdAt: -1,
       });
+
+    // =====================================================
+    // RESPONSE
+    // =====================================================
 
     return res.status(200).json({
       success: true,
@@ -711,46 +965,6 @@ const getRestaurantMenus = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Failed to get restaurant menus",
-      error: error.message,
-    });
-  }
-};
-const getMenu = async (req, res) => {
-  console.log("getMenu");
-
-  try {
-    const { id } = req.params;
-
-    if (!id) {
-      return res.status(400).json({
-        success: false,
-        message: "Menu ID is required",
-      });
-    }
-
-    const menu = await Menu.findById(id)
-      .populate("items")
-      .populate("categories")
-      .populate("restaurant");
-
-    if (!menu) {
-      return res.status(404).json({
-        success: false,
-        message: "Menu not found",
-      });
-    }
-
-    return res.status(200).json({
-      success: true,
-      menu,
-    });
-  } catch (error) {
-    console.log(error.message);
-    console.error("Get menu error:", error);
-
-    return res.status(500).json({
-      success: false,
-      message: "Failed to get menu",
       error: error.message,
     });
   }

@@ -23,6 +23,8 @@ const restaurantSchema = new mongoose.Schema(
     ],
     coverImage: String,
     footerMessage: String,
+    mainImage: String,
+
     openingHours: Object,
     facebook: String,
     instagram: String,
