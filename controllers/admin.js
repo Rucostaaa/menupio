@@ -3,7 +3,7 @@ const Category = require("../models/Category");
 const User = require("../models/User");
 const Restaurant = require("../models/Restaurant");
 const Menu = require("../models/Menu");
-
+const catchAsync = require("../utils/catchAsync");
 /*
 |--------------------------------------------------------------------------
 | GET PRODUCTS + CATEGORIES
@@ -61,71 +61,65 @@ const getAllProducts = async (req, res) => {
 |
 */
 
-const bulkProducts = async (req, res) => {
-  try {
-    const { products } = req.body;
+const bulkProducts = catchAsync(async (req, res) => {
+  const { items } = req.body;
 
-    if (!Array.isArray(products)) {
-      return res.status(400).json({
-        success: false,
-        message: "products must be an array",
-      });
-    }
-
-    if (products.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: "No products provided",
-      });
-    }
-
-    const operations = products
-      .filter((product) => product?._id)
-      .map((product) => ({
-        updateOne: {
-          filter: {
-            _id: product._id,
-          },
-
-          update: {
-            $set: {
-              ...product,
-            },
-          },
-
-          upsert: false,
-        },
-      }));
-
-    if (operations.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: "No valid products provided",
-      });
-    }
-
-    const result = await MenuItem.bulkWrite(operations);
-
-    return res.status(200).json({
-      success: true,
-
-      message: "Products updated successfully",
-
-      result: {
-        matchedCount: result.matchedCount,
-        modifiedCount: result.modifiedCount,
-        upsertedCount: result.upsertedCount,
-      },
-    });
-  } catch (error) {
-    console.error("bulkProducts error:", error);
-
-    return res.status(500).json({
+  if (!Array.isArray(items)) {
+    return res.status(400).json({
       success: false,
-      message: "Failed to update products",
+      message: "items must be an array",
     });
   }
-};
+
+  const created = [];
+  const updated = [];
+
+  for (const item of items) {
+    const { id, _id, ...data } = item;
+
+    // =====================================================
+    // UPDATE
+    // =====================================================
+
+    if (id || _id) {
+      const menuItemId = id || _id;
+
+      const menuItem = await MenuItem.findById(menuItemId);
+
+      if (!menuItem) {
+        return res.status(404).json({
+          success: false,
+          message: `Menu item not found: ${menuItemId}`,
+        });
+      }
+
+      Object.assign(menuItem, data);
+
+      await menuItem.save();
+
+      updated.push(menuItem);
+    }
+
+    // =====================================================
+    // CREATE
+    // =====================================================
+    else {
+      const menuItem = await MenuItem.create(data);
+
+      created.push(menuItem);
+    }
+  }
+
+  return res.status(200).json({
+    success: true,
+    message: "Menu items processed successfully",
+    created,
+    updated,
+    createdCount: created.length,
+    updatedCount: updated.length,
+    items: [...created, ...updated],
+  });
+});
 const getAllUsers = async (req, res) => {
   try {
     const users = await User.find({})
@@ -194,7 +188,64 @@ const getAllMenus = async (req, res) => {
 | CLONE MENU
 |--------------------------------------------------------------------------
 */
+const bulkCategories = catchAsync(async (req, res) => {
+  const { categories } = req.body;
 
+  if (!Array.isArray(categories)) {
+    return res.status(400).json({
+      success: false,
+      message: "categories must be an array",
+    });
+  }
+
+  const results = [];
+
+  for (const categoryData of categories) {
+    const { id, ...data } = categoryData;
+
+    // ============================================
+    // UPDATE
+    // ============================================
+
+    if (id) {
+      const category = await Category.findByIdAndUpdate(id, data, {
+        new: true,
+        runValidators: true,
+      });
+
+      if (!category) {
+        return res.status(404).json({
+          success: false,
+          message: `Category not found: ${id}`,
+        });
+      }
+
+      results.push({
+        action: "updated",
+        category,
+      });
+
+      continue;
+    }
+
+    // ============================================
+    // CREATE
+    // ============================================
+
+    const category = await Category.create(data);
+
+    results.push({
+      action: "created",
+      category,
+    });
+  }
+
+  return res.status(200).json({
+    success: true,
+    message: "Categories processed successfully",
+    results,
+  });
+});
 const cloneMenu = (req, res) => {};
 const updateMenu = (req, res) => {};
 const deleteMenu = (req, res) => {};
@@ -209,6 +260,7 @@ module.exports = {
   getAllUsers,
   cloneMenu,
   updateMenu,
+  bulkCategories,
   deleteMenu,
   createRestaurant,
   createSingleProduct,

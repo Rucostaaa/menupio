@@ -2,6 +2,7 @@ const {
   getAllRestaurants,
   getAllProducts,
   bulkProducts,
+  bulkCategories,
   getAllUsers,
   cloneMenu,
   updateMenu,
@@ -18,13 +19,14 @@ router
   .route("/restaurant")
   .get(auth, getAllRestaurants)
   .post(auth, createRestaurant);
+
 router.route("/products").post(auth, createSingleProduct);
 
 router
-  .route("/products-categories")
+  .route("/products/bulk")
   .get(auth, getAllProducts)
   .post(auth, bulkProducts);
-
+router.put("/categories/bulk", bulkCategories);
 router.route("/users").get(auth, getAllUsers);
 router.route("/screens").get(auth, getAllMenus);
 router
