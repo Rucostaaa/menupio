@@ -82,3 +82,88 @@ exports.updateImage = catchAsync(async (req, res) => {
 
   res.json(product);
 });
+exports.createProductsBulk = catchAsync(async (req, res) => {
+  const products = Array.isArray(req.body) ? req.body : req.body?.products;
+
+  if (!Array.isArray(products)) {
+    return res.status(400).json({
+      success: false,
+      message: "Products must be an array",
+    });
+  }
+
+  if (products.length === 0) {
+    return res.status(400).json({
+      success: false,
+      message: "Products array cannot be empty",
+    });
+  }
+
+  const results = {
+    created: [],
+    updated: [],
+  };
+
+  for (const product of products) {
+    const namePt = product?.name?.pt?.trim();
+
+    if (!namePt) {
+      return res.status(400).json({
+        success: false,
+        message: "Every product must have a Portuguese name",
+      });
+    }
+
+    // Don't allow the client to control these fields
+    const { _id, id, owner, ...productData } = product;
+
+    // Normalize
+    productData.name = {
+      pt: productData.name?.pt?.trim() || "",
+      en: productData.name?.en?.trim() || "",
+    };
+
+    productData.models = Array.isArray(productData.models)
+      ? productData.models
+      : [];
+
+    productData.allergens = Array.isArray(productData.allergens)
+      ? productData.allergens
+      : [];
+
+    productData.available =
+      typeof productData.available === "boolean" ? productData.available : true;
+
+    // Find existing product by trimmed PT name
+    const existingProduct = await MenuItem.findOne({
+      owner: req.user._id,
+      "name.pt": {
+        $regex: `^${namePt.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
+        $options: "i",
+      },
+    });
+
+    if (existingProduct) {
+      Object.assign(existingProduct, productData);
+
+      await existingProduct.save();
+
+      results.updated.push(existingProduct);
+    } else {
+      const newProduct = await MenuItem.create({
+        ...productData,
+        owner: req.user._id,
+      });
+
+      results.created.push(newProduct);
+    }
+  }
+
+  res.status(200).json({
+    success: true,
+    createdCount: results.created.length,
+    updatedCount: results.updated.length,
+    created: results.created,
+    updated: results.updated,
+  });
+});

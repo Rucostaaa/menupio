@@ -10,10 +10,14 @@ const {
   updateMenuItem,
   deleteMenuItem,
   updateImage,
+  createProductsBulk,
 } = require("../controllers/menuItem");
 
-router.route("/").get(auth, getMenuItems).post(auth, createMenuItem);
-
+router
+  .route("/")
+  .get(auth, getMenuItems)
+  .post(auth, createMenuItem)
+  .put(auth, createProductsBulk);
 router
   .route("/:id")
   .get(getMenuItem)

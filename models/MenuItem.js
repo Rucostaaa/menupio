@@ -21,8 +21,21 @@ const menuItemSchema = new mongoose.Schema(
     image: [String],
 
     ingredients: [String],
-
-    allergens: [String],
+    models: [
+      {
+        title: {
+          pt: String,
+          en: String,
+        },
+        price: Number,
+      },
+    ],
+    allergens: [
+      {
+        pt: String,
+        en: String,
+      },
+    ],
     promo: {
       status: Boolean,
       text: String,
