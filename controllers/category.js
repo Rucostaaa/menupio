@@ -1,6 +1,7 @@
 const cloudinary = require("../utils/Claudinary");
 const catchAsync = require("../utils/catchAsync");
 const Category = require("../models/Category");
+const MainCategory = require("../models/MainCategory");
 exports.createCategory = catchAsync(async (req, res) => {
   const { name, featured } = req.body;
   const user = req.user._id;
@@ -166,4 +167,300 @@ exports.updateCategoryImage = catchAsync(async (req, res) => {
   await category.save();
 
   res.json(category);
+});
+// Main Categories
+exports.getBusinessMainCategories = catchAsync(async (req, res) => {
+  const user = req.params._id;
+
+  const filter = {};
+
+  if (user) {
+    filter.user = user;
+  }
+
+  const mainCategories = await MainCategory.find(filter)
+    .populate({
+      path: "categories",
+      select: "name image ownID",
+    })
+    .sort({
+      order: 1,
+      createdAt: 1,
+    });
+
+  res.status(200).json(mainCategories);
+});
+// POST /category/main-category
+exports.createMainCategory = async (req, res) => {
+  try {
+    const { name, categories = [] } = req.body;
+    const user = req?.user?._id;
+
+    if (!name?.pt || !name?.en) {
+      return res.status(400).json({
+        message: "Main category name is required",
+      });
+    }
+
+    if (!Array.isArray(categories)) {
+      return res.status(400).json({
+        message: "Categories must be an array",
+      });
+    }
+
+    // Validate category IDs
+    if (categories.length > 0) {
+      const validCategories = await Category.find({
+        _id: { $in: categories },
+        user,
+      }).select("_id");
+
+      if (validCategories.length !== categories.length) {
+        return res.status(400).json({
+          message: "One or more category IDs are invalid",
+        });
+      }
+    }
+
+    // Get the next order for this user
+    const lastMainCategory = await MainCategory.findOne({
+      user,
+    }).sort({
+      order: -1,
+    });
+
+    const order = lastMainCategory ? lastMainCategory.order + 1 : 0;
+
+    const mainCategory = await MainCategory.create({
+      name: {
+        pt: name.pt,
+        en: name.en,
+      },
+      categories,
+      user,
+      order,
+    });
+
+    await mainCategory.populate("categories");
+
+    return res.status(201).json(mainCategory);
+  } catch (error) {
+    console.error("createMainCategory:", error);
+
+    return res.status(500).json({
+      message: "Failed to create main category",
+      error: error.message,
+    });
+  }
+};
+// PUT /category/main-category/:id
+exports.updateMainCategory = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, categories } = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        message: "Invalid main category ID",
+      });
+    }
+
+    const mainCategory = await MainCategory.findById(id);
+
+    if (!mainCategory) {
+      return res.status(404).json({
+        message: "Main category not found",
+      });
+    }
+
+    if (name !== undefined) {
+      if (typeof name !== "object" || Array.isArray(name)) {
+        return res.status(400).json({
+          message: "Name must be an object",
+        });
+      }
+
+      mainCategory.name = {
+        pt: name.pt ?? mainCategory.name.pt,
+        en: name.en ?? mainCategory.name.en,
+      };
+    }
+
+    if (categories !== undefined) {
+      if (!Array.isArray(categories)) {
+        return res.status(400).json({
+          message: "Categories must be an array",
+        });
+      }
+
+      const invalidIds = categories.filter(
+        (categoryId) => !mongoose.Types.ObjectId.isValid(categoryId),
+      );
+
+      if (invalidIds.length > 0) {
+        return res.status(400).json({
+          message: "One or more category IDs are invalid",
+        });
+      }
+
+      const validCategories = await Category.find({
+        _id: { $in: categories },
+      }).select("_id");
+
+      if (validCategories.length !== categories.length) {
+        return res.status(400).json({
+          message: "One or more category IDs do not exist",
+        });
+      }
+
+      mainCategory.categories = categories;
+    }
+
+    await mainCategory.save();
+    await mainCategory.populate("categories");
+
+    return res.status(200).json(mainCategory);
+  } catch (error) {
+    console.error("updateMainCategory:", error);
+
+    return res.status(500).json({
+      message: "Failed to update main category",
+      error: error.message,
+    });
+  }
+};
+// PUT /category/main-category
+exports.updateMainCategories = async (req, res) => {
+  try {
+    const { mainCategories } = req.body;
+
+    if (!Array.isArray(mainCategories)) {
+      return res.status(400).json({
+        message: "mainCategories must be an array",
+      });
+    }
+
+    for (const mainCategory of mainCategories) {
+      if (!mongoose.Types.ObjectId.isValid(mainCategory._id)) {
+        return res.status(400).json({
+          message: `Invalid main category ID: ${mainCategory._id}`,
+        });
+      }
+
+      if (mainCategory.categories !== undefined) {
+        if (!Array.isArray(mainCategory.categories)) {
+          return res.status(400).json({
+            message: `Categories must be an array for ${mainCategory._id}`,
+          });
+        }
+
+        const invalidIds = mainCategory.categories.filter(
+          (categoryId) => !mongoose.Types.ObjectId.isValid(categoryId),
+        );
+
+        if (invalidIds.length > 0) {
+          return res.status(400).json({
+            message: "One or more category IDs are invalid",
+          });
+        }
+      }
+    }
+
+    const operations = mainCategories.map((mainCategory) => {
+      const update = {};
+
+      if (mainCategory.name !== undefined) {
+        update.name = mainCategory.name;
+      }
+
+      if (mainCategory.categories !== undefined) {
+        update.categories = mainCategory.categories;
+      }
+
+      return {
+        updateOne: {
+          filter: { _id: mainCategory._id },
+          update: { $set: update },
+        },
+      };
+    });
+
+    await MainCategory.bulkWrite(operations);
+
+    const updatedMainCategories = await MainCategory.find()
+      .populate("categories")
+      .sort({ createdAt: 1 });
+
+    return res.status(200).json(updatedMainCategories);
+  } catch (error) {
+    console.error("updateMainCategories:", error);
+
+    return res.status(500).json({
+      message: "Failed to update main categories",
+      error: error.message,
+    });
+  }
+};
+// DELETE /category/main-category/:id
+exports.deleteMainCategory = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        message: "Invalid main category ID",
+      });
+    }
+
+    const mainCategory = await MainCategory.findByIdAndDelete(id);
+
+    if (!mainCategory) {
+      return res.status(404).json({
+        message: "Main category not found",
+      });
+    }
+
+    return res.status(200).json({
+      message: "Main category deleted successfully",
+      mainCategory,
+    });
+  } catch (error) {
+    console.error("deleteMainCategory:", error);
+
+    return res.status(500).json({
+      message: "Failed to delete main category",
+      error: error.message,
+    });
+  }
+};
+exports.getBusinessMainCategory = catchAsync(async (req, res) => {
+  const user = req.params._id;
+
+  const filter = {};
+
+  if (user) {
+    filter.user = user;
+  }
+
+  const mainCategories = await MainCategory.find(filter).sort({
+    ownID: 1,
+  });
+
+  res.status(200).json(mainCategories);
+});
+
+exports.getMainCategories = catchAsync(async (req, res) => {
+  const user = req.user._id;
+
+  const filter = {};
+
+  if (user) {
+    filter.user = user;
+  }
+
+  const mainCategories = await MainCategory.find(filter).sort({
+    ownID: 1,
+  });
+
+  res.status(200).json(mainCategories);
 });

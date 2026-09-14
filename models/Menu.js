@@ -1,5 +1,4 @@
 const mongoose = require("mongoose");
-const { type } = require("node:os");
 
 const menuSchema = new mongoose.Schema(
   {
@@ -8,6 +7,7 @@ const menuSchema = new mongoose.Schema(
       ref: "Restaurant",
       required: true,
     },
+
     name: {
       type: String,
       required: true,
@@ -37,7 +37,12 @@ const menuSchema = new mongoose.Schema(
         ref: "MenuItem",
       },
     ],
-
+    mainCategory: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "MainCategory",
+      },
+    ],
     categories: [
       {
         type: mongoose.Schema.Types.ObjectId,

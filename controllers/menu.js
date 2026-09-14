@@ -1,5 +1,6 @@
 const Menu = require("../models/Menu");
 const Restaurant = require("../models/Restaurant");
+const MenuItem = require("../models/MenuItem");
 
 const cloudinary = require("../utils/Claudinary");
 const mongoose = require("mongoose");
@@ -405,6 +406,7 @@ const getMenus = async (req, res) => {
     })
       .populate("items")
       .populate("categories")
+      .populate("mainCategory")
       .populate("restaurant")
       .sort({
         createdAt: -1,
@@ -467,6 +469,12 @@ const getMenu = async (req, res) => {
     const menu = await Menu.findById(id)
       .populate("items")
       .populate("categories")
+      .populate({
+        path: "mainCategory",
+        populate: {
+          path: "categories",
+        },
+      })
       .populate("restaurant");
 
     // =====================================================
@@ -498,7 +506,179 @@ const getMenu = async (req, res) => {
     });
   }
 };
+const getInitialData = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { categories } = req.query;
 
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message: "Menu ID is required",
+      });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid menu ID",
+      });
+    }
+
+    let categoryIds = [];
+
+    // =========================================================
+    // CATEGORIES FROM QUERY
+    // =========================================================
+
+    if (categories) {
+      categoryIds = Array.isArray(categories)
+        ? categories
+        : categories.split(",");
+
+      categoryIds = categoryIds
+        .map((categoryId) => categoryId.trim())
+        .filter(Boolean);
+
+      const invalidCategoryId = categoryIds.find(
+        (categoryId) => !mongoose.Types.ObjectId.isValid(categoryId),
+      );
+
+      if (invalidCategoryId) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid category ID",
+        });
+      }
+    }
+
+    // =========================================================
+    // GET MENU
+    // =========================================================
+
+    const menu = await Menu.findById(id)
+      .select("name items categories mainCategory restaurant")
+      .populate({
+        path: "categories",
+        select: "name order",
+      })
+      .populate({
+        path: "mainCategory",
+        select: "name categories order",
+        populate: {
+          path: "categories",
+          select: "name order",
+        },
+      })
+      .populate({
+        path: "restaurant",
+        select:
+          "name logo mainImage since openingHours description facebook instagram email address phone footerMessage",
+      })
+      .lean();
+
+    if (!menu) {
+      return res.status(404).json({
+        success: false,
+        message: "Menu not found",
+      });
+    }
+
+    // =========================================================
+    // NO QUERY CATEGORIES
+    // =========================================================
+
+    if (categoryIds.length === 0) {
+      /*
+       * MENU WITH MAIN CATEGORIES
+       *
+       * Load products from the first main category.
+       */
+
+      const firstMainCategory = Array.isArray(menu.mainCategory)
+        ? menu.mainCategory[0]
+        : null;
+
+      if (firstMainCategory) {
+        const firstMainCategoryCategories = Array.isArray(
+          firstMainCategory.categories,
+        )
+          ? firstMainCategory.categories
+          : [];
+
+        categoryIds = firstMainCategoryCategories
+          .map((category) => {
+            if (typeof category === "string") {
+              return category;
+            }
+
+            return category?._id || category?.id || null;
+          })
+          .filter(Boolean)
+          .map((categoryId) => categoryId.toString());
+      } else {
+        /*
+         * SIMPLE MENU
+         *
+         * No main categories exist.
+         * Use the menu's normal categories.
+         */
+
+        const menuCategories = Array.isArray(menu.categories)
+          ? menu.categories
+          : [];
+
+        categoryIds = menuCategories
+          .map((category) => {
+            if (typeof category === "string") {
+              return category;
+            }
+
+            return category?._id || category?.id || null;
+          })
+          .filter(Boolean)
+          .map((categoryId) => categoryId.toString());
+      }
+    }
+
+    // =========================================================
+    // GET PRODUCTS
+    // =========================================================
+
+    let items = [];
+
+    if (categoryIds.length > 0) {
+      items = await MenuItem.find({
+        _id: {
+          $in: menu.items || [],
+        },
+        category: {
+          $in: categoryIds,
+        },
+      }).lean();
+    }
+
+    // =========================================================
+    // RESPONSE
+    // =========================================================
+
+    return res.status(200).json({
+      success: true,
+      menu: {
+        ...menu,
+        items,
+      },
+    });
+  } catch (error) {
+    console.error("getInitialData error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to get menu",
+      error: error.message,
+    });
+  }
+};
 // =====================================================
 // UPDATE MENU
 // =====================================================
@@ -591,7 +771,7 @@ const updateMenu = async (req, res) => {
     // =====================================================
     // NAME
     // =====================================================
-
+    const mainCategories = settings.mainCategories;
     if (name !== undefined && !String(name).trim()) {
       return res.status(400).json({
         success: false,
@@ -663,6 +843,59 @@ const updateMenu = async (req, res) => {
     }
 
     // =====================================================
+    // MAIN CATEGORIES
+    // =====================================================
+    //
+    // Expected:
+    //
+    // mainCategories: [
+    //   "65...",
+    //   "66...",
+    //   "67..."
+    // ]
+    //
+    // Only IDs are stored.
+    //
+
+    if (mainCategories !== undefined) {
+      try {
+        const parsedMainCategories =
+          typeof mainCategories === "string"
+            ? JSON.parse(mainCategories)
+            : mainCategories;
+
+        if (!Array.isArray(parsedMainCategories)) {
+          return res.status(400).json({
+            success: false,
+            message: "Main categories must be an array",
+          });
+        }
+
+        const invalidMainCategory = parsedMainCategories.find(
+          (mainCategoryId) => !mongoose.Types.ObjectId.isValid(mainCategoryId),
+        );
+
+        if (invalidMainCategory) {
+          return res.status(400).json({
+            success: false,
+            message: "Invalid main category ID",
+          });
+        }
+        const mainCategoryIds = parsedMainCategories.map(
+          (mainCategory) => mainCategory.id,
+        );
+        console.log("mainCategoryIds", mainCategoryIds);
+
+        menu.mainCategory = mainCategoryIds;
+      } catch (error) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid mainCategories format",
+        });
+      }
+    }
+
+    // =====================================================
     // SETTINGS
     // =====================================================
 
@@ -678,6 +911,8 @@ const updateMenu = async (req, res) => {
           ...(parsedSettings || {}),
         };
       } catch (error) {
+        console.log(error.message);
+
         return res.status(400).json({
           success: false,
           message: "Invalid settings format",
@@ -741,6 +976,7 @@ const updateMenu = async (req, res) => {
     const populatedMenu = await Menu.findById(menu._id)
       .populate("items")
       .populate("categories")
+      .populate("mainCategory")
       .populate("restaurant");
 
     // =====================================================
@@ -981,4 +1217,5 @@ module.exports = {
   updateMenu,
   deleteMenu,
   getRestaurantMenus,
+  getInitialData,
 };

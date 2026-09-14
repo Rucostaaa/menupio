@@ -10,6 +10,7 @@ const {
   deleteMenu,
   getRestaurantMenus,
   getMenu,
+  getInitialData,
 } = require("../controllers/menu");
 
 /*
@@ -42,5 +43,6 @@ router
   .get(getMenu)
   .put(auth, upload.single("mainImage"), updateMenu)
   .delete(auth, deleteMenu);
+router.route("/:id/initial-data").get(getInitialData);
 
 module.exports = router;
