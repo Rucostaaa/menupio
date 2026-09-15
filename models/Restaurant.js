@@ -29,6 +29,7 @@ const restaurantSchema = new mongoose.Schema(
     facebook: String,
     instagram: String,
     whatsAppNumber: String,
+    website: String,
   },
   {
     timestamps: true,

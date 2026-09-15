@@ -469,6 +469,7 @@ const getMenu = async (req, res) => {
     const menu = await Menu.findById(id)
       .populate("items")
       .populate("categories")
+      .populate("hasAdverts")
       .populate({
         path: "mainCategory",
         populate: {
@@ -491,6 +492,7 @@ const getMenu = async (req, res) => {
     // =====================================================
     // RESPONSE
     // =====================================================
+    console.log("menu", menu);
 
     return res.status(200).json({
       success: true,
@@ -557,7 +559,7 @@ const getInitialData = async (req, res) => {
     // =========================================================
 
     const menu = await Menu.findById(id)
-      .select("name items categories mainCategory restaurant")
+      .select("name items categories mainCategory restaurant hasAdverts")
       .populate({
         path: "categories",
         select: "name order",
@@ -572,8 +574,6 @@ const getInitialData = async (req, res) => {
       })
       .populate({
         path: "restaurant",
-        select:
-          "name logo mainImage since openingHours description facebook instagram email address phone footerMessage",
       })
       .lean();
 
@@ -661,7 +661,7 @@ const getInitialData = async (req, res) => {
     // =========================================================
     // RESPONSE
     // =========================================================
-
+    console.log("menu", menu);
     return res.status(200).json({
       success: true,
       menu: {

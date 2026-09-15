@@ -19,8 +19,11 @@ const userSchema = new mongoose.Schema(
 
     role: {
       type: String,
-      enum: ["customer", "user", "admin", "viewer"],
+      enum: ["customer", "user", "advertisor", "admin", "viewer"],
       default: "user",
+    },
+    mainImage: {
+      type: String,
     },
     loyaltyCards: [
       {

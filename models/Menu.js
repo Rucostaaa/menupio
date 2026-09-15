@@ -31,6 +31,10 @@ const menuSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
+    hasAdverts: {
+      type: Boolean,
+      default: false,
+    },
     items: [
       {
         type: mongoose.Schema.Types.ObjectId,
