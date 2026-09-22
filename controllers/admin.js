@@ -182,7 +182,74 @@ const getAllMenus = async (req, res) => {
     });
   }
 };
+const updateAdminUserRole = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { role } = req.body;
+    console.log("role", req?.user);
 
+    // Only admins can change user roles
+    if (req.user?.role !== "Admin") {
+      return res.status(403).json({
+        success: false,
+        message: "Apenas administradores podem alterar roles.",
+      });
+    }
+
+    const allowedRoles = [
+      "admin",
+      "owner",
+      "employer",
+      "advertisor",
+      "customer",
+      "user",
+    ];
+
+    if (!role || !allowedRoles.includes(role)) {
+      return res.status(400).json({
+        success: false,
+        message: "Role inválida.",
+      });
+    }
+
+    const user = await User.findById(id);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "Utilizador não encontrado.",
+      });
+    }
+
+    // An admin can NEVER change their own role
+    if (String(user._id) === String(req.user._id)) {
+      return res.status(403).json({
+        success: false,
+        message: "Não podes alterar a tua própria role.",
+      });
+    }
+
+    user.role = role;
+
+    await user.save();
+
+    const updatedUser = await User.findById(user._id).select("-password");
+
+    return res.status(200).json({
+      success: true,
+      message: "Role atualizada com sucesso.",
+      user: updatedUser,
+    });
+  } catch (error) {
+    console.error("UPDATE ADMIN USER ROLE ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message:
+        error?.message || "Não foi possível atualizar a role do utilizador.",
+    });
+  }
+};
 /*
 |--------------------------------------------------------------------------
 | CLONE MENU
@@ -264,4 +331,5 @@ module.exports = {
   deleteMenu,
   createRestaurant,
   createSingleProduct,
+  updateAdminUserRole,
 };

@@ -2,6 +2,7 @@ const User = require("../models/User");
 const catchAsync = require("../utils/catchAsync");
 const generateToken = require("../utils/generateToken");
 const AppError = require("../utils/AppError");
+const Restaurant = require("../models/Restaurant");
 
 /*
 |--------------------------------------------------------------------------
@@ -74,5 +75,53 @@ exports.register = catchAsync(async (req, res) => {
       email: user.email,
       role: user.role,
     },
+  });
+});
+
+exports.getCurrentUser = catchAsync(async (req, res) => {
+  // ----------------------------------------------------------
+  // 1. Get authenticated user ID from auth middleware
+  // ----------------------------------------------------------
+
+  const userId = req.user?._id;
+
+  if (!userId) {
+    return res.status(401).json({
+      success: false,
+      message: "Utilizador não autenticado.",
+    });
+  }
+
+  // ----------------------------------------------------------
+  // 2. Find the complete user
+  // ----------------------------------------------------------
+
+  const user = await User.findById(userId).select("-password").populate({
+    path: "bookings",
+    model: "Booking",
+  });
+  const restaurants = await Restaurant.find({ owner: user._id }).populate({
+    path: "employers",
+    model: "User",
+  });
+  // ----------------------------------------------------------
+  // 3. User not found
+  // ----------------------------------------------------------
+
+  if (!user) {
+    return res.status(404).json({
+      success: false,
+      message: "Utilizador não encontrado.",
+    });
+  }
+
+  // ----------------------------------------------------------
+  // 4. Return current user
+  // ----------------------------------------------------------
+
+  return res.status(200).json({
+    success: true,
+    user,
+    restaurants,
   });
 });

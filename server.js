@@ -7,8 +7,12 @@ const helmet = require("helmet");
 const compression = require("compression");
 const morgan = require("morgan");
 const path = require("path");
+const http = require("http");
+const { initializeSocket } = require("./utils/socket");
 
 const app = express();
+const httpServer = http.createServer(app);
+initializeSocket(httpServer);
 
 const PORT = process.env.PORT || 5000;
 
@@ -102,6 +106,12 @@ app.use("/api/products", require("./routes/menuItem"));
 
 app.use("/api/menu", require("./routes/menu"));
 app.use("/api/admin", require("./routes/admin"));
+app.use("/api/session", require("./routes/session"));
+app.use("/api/bookings", require("./routes/booking"));
+app.use("/api/stripe", require("./routes/stripe"));
+app.use("/api/payments", require("./routes/payments"));
+app.use("/api/review", require("./routes/review"));
+app.use("/api/loyalty", require("./routes/loyalty"));
 
 /*
 |--------------------------------------------------------------------------
@@ -177,7 +187,7 @@ const connectMongoDB = async () => {
 |--------------------------------------------------------------------------
 */
 
-app.listen(PORT, () => {
+httpServer.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
 
   connectMongoDB();

@@ -225,9 +225,11 @@ exports.createMainCategory = async (req, res) => {
     // Get the next order for this user
     const lastMainCategory = await MainCategory.findOne({
       user,
-    }).sort({
-      order: -1,
-    });
+    })
+      .sort({
+        order: -1,
+      })
+      .populate("category");
 
     const order = lastMainCategory ? lastMainCategory.order + 1 : 0;
 
@@ -458,9 +460,11 @@ exports.getMainCategories = catchAsync(async (req, res) => {
     filter.user = user;
   }
 
-  const mainCategories = await MainCategory.find(filter).sort({
-    ownID: 1,
-  });
+  const mainCategories = await MainCategory.find(filter)
+    .sort({
+      ownID: 1,
+    })
+    .populate("categories");
 
   res.status(200).json(mainCategories);
 });

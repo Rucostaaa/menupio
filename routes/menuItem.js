@@ -11,6 +11,7 @@ const {
   deleteMenuItem,
   updateImage,
   createProductsBulk,
+  getOwnerMenuItem,
 } = require("../controllers/menuItem");
 
 router
@@ -18,6 +19,8 @@ router
   .get(auth, getMenuItems)
   .post(auth, createMenuItem)
   .put(auth, createProductsBulk);
+router.route("/owner/:ownerId").get(getOwnerMenuItem);
+
 router
   .route("/:id")
   .get(getMenuItem)

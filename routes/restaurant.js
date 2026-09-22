@@ -11,9 +11,11 @@ const {
   deleteRestaurant,
   updateLogo,
   updateMainImage,
+  getEmployerRestaurant,
 } = require("../controllers/restaurant");
 
 router.route("/").get(auth, getRestaurants).post(auth, createRestaurant);
+router.route("/employer/:id").post(auth, getEmployerRestaurant);
 
 router
   .route("/:id")

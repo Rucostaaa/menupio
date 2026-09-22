@@ -50,6 +50,32 @@ const menuItemSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    stripe: {
+      connected: {
+        type: Boolean,
+        default: false,
+      },
+      productId: {
+        type: String,
+        default: null,
+      },
+      priceId: {
+        type: String,
+        default: null,
+      },
+      currency: {
+        type: String,
+        default: "eur",
+      },
+      active: {
+        type: Boolean,
+        default: false,
+      },
+      syncedAt: {
+        type: Date,
+        default: null,
+      },
+    },
   },
   {
     timestamps: true,

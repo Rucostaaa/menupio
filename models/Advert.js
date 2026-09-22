@@ -20,6 +20,12 @@ const advertSchema = new mongoose.Schema(
         ref: "Session",
       },
     ],
+    purchase: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Session",
+      },
+    ],
   },
   {
     timestamps: true,

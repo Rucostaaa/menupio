@@ -1,4 +1,6 @@
 const MenuItem = require("../models/MenuItem");
+const User = require("../models/User");
+
 const cloudinary = require("../utils/Claudinary");
 const catchAsync = require("../utils/catchAsync");
 
@@ -42,8 +44,6 @@ exports.deleteMenuItem = catchAsync(async (req, res) => {
 });
 exports.updateImage = catchAsync(async (req, res) => {
   const { id } = req.params;
-
-  console.log("PRODUCT ID:", id);
 
   const product = await MenuItem.findById(id);
 
@@ -165,5 +165,34 @@ exports.createProductsBulk = catchAsync(async (req, res) => {
     updatedCount: results.updated.length,
     created: results.created,
     updated: results.updated,
+  });
+});
+exports.getOwnerMenuItem = catchAsync(async (req, res) => {
+  const { ownerId } = req.params;
+
+  if (!ownerId) {
+    return res.status(400).json({
+      success: false,
+      message: "OwnerId must be provided",
+    });
+  }
+
+  const owner = await User.findById(ownerId);
+
+  if (!owner) {
+    return res.status(404).json({
+      success: false,
+      message: "Owner not found",
+    });
+  }
+
+  const items = await MenuItem.find({
+    owner: ownerId,
+  }).populate("category", "name");
+
+  return res.status(200).json({
+    success: true,
+    count: items.length,
+    items,
   });
 });

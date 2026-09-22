@@ -9,7 +9,15 @@ const sessionSchema = new mongoose.Schema(
     sessionTime: Number,
     seen: {
       productsSeen: Array,
-      categoriesSeen: Array,
+      advertsSeen: Array,
+      menuItemsBought: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Cart",
+      },
+      advertItemsBought: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Cart",
+      },
     },
     clicked: [
       {
@@ -20,6 +28,7 @@ const sessionSchema = new mongoose.Schema(
       },
     ],
   },
+
   {
     timestamps: true,
   },

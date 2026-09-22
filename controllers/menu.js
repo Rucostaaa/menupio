@@ -415,6 +415,7 @@ const getMenus = async (req, res) => {
     // =====================================================
     // RESPONSE
     // =====================================================
+    console.log(menus);
 
     return res.status(200).json({
       success: true,
@@ -481,6 +482,7 @@ const getMenu = async (req, res) => {
     // =====================================================
     // NOT FOUND
     // =====================================================
+    console.log("getmenu,mnu", menu);
 
     if (!menu) {
       return res.status(404).json({
@@ -492,7 +494,6 @@ const getMenu = async (req, res) => {
     // =====================================================
     // RESPONSE
     // =====================================================
-    console.log("menu", menu);
 
     return res.status(200).json({
       success: true,
@@ -512,6 +513,11 @@ const getInitialData = async (req, res) => {
   try {
     const { id } = req.params;
     const { categories } = req.query;
+    const page = Math.max(Number.parseInt(req.query.page, 10) || 1, 1);
+    const limit = Math.min(
+      Math.max(Number.parseInt(req.query.limit, 10) || 8, 1),
+      50,
+    );
 
     if (!id) {
       return res.status(400).json({
@@ -576,6 +582,7 @@ const getInitialData = async (req, res) => {
         path: "restaurant",
       })
       .lean();
+    console.log("get initial data", menu);
 
     if (!menu) {
       return res.status(404).json({
@@ -646,27 +653,40 @@ const getInitialData = async (req, res) => {
     // =========================================================
 
     let items = [];
+    let totalItems = 0;
 
     if (categoryIds.length > 0) {
-      items = await MenuItem.find({
+      const itemFilter = {
         _id: {
           $in: menu.items || [],
         },
         category: {
           $in: categoryIds,
         },
-      }).lean();
+      };
+
+      totalItems = await MenuItem.countDocuments(itemFilter);
+      items = await MenuItem.find(itemFilter)
+        .sort({ _id: 1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean();
     }
 
     // =========================================================
     // RESPONSE
     // =========================================================
-    console.log("menu", menu);
     return res.status(200).json({
       success: true,
       menu: {
         ...menu,
         items,
+        pagination: {
+          page,
+          limit,
+          total: totalItems,
+          hasMore: page * limit < totalItems,
+        },
       },
     });
   } catch (error) {
@@ -884,7 +904,6 @@ const updateMenu = async (req, res) => {
         const mainCategoryIds = parsedMainCategories.map(
           (mainCategory) => mainCategory.id,
         );
-        console.log("mainCategoryIds", mainCategoryIds);
 
         menu.mainCategory = mainCategoryIds;
       } catch (error) {
@@ -911,8 +930,6 @@ const updateMenu = async (req, res) => {
           ...(parsedSettings || {}),
         };
       } catch (error) {
-        console.log(error.message);
-
         return res.status(400).json({
           success: false,
           message: "Invalid settings format",

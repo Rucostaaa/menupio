@@ -1,4 +1,6 @@
 const Restaurant = require("../models/Restaurant");
+const User = require("../models/User");
+const Menu = require("../models/Menu");
 const cloudinary = require("../utils/Claudinary");
 const catchAsync = require("../utils/catchAsync");
 
@@ -13,11 +15,7 @@ const extractCloudinaryPublicId = (imageUrl) => {
 
   try {
     const url = new URL(imageUrl);
-
     const pathname = url.pathname;
-
-    // Example:
-    // /my-cloud/image/upload/v123456789/menupio/restaurants/main-images/abc123.jpg
 
     const uploadIndex = pathname.indexOf("/upload/");
 
@@ -27,20 +25,16 @@ const extractCloudinaryPublicId = (imageUrl) => {
 
     let publicPath = pathname.substring(uploadIndex + "/upload/".length);
 
-    // Remove transformation parameters if present
-    // Example:
-    // /c_fill,w_500/v123/menupio/...
     const parts = publicPath.split("/");
 
-    // Remove version:
-    // v123456789
+    // Remove Cloudinary version.
     if (parts[0] && /^v\d+$/.test(parts[0])) {
       parts.shift();
     }
 
     publicPath = parts.join("/");
 
-    // Remove file extension
+    // Remove file extension.
     publicPath = publicPath.replace(/\.[^/.]+$/, "");
 
     return publicPath || null;
@@ -52,6 +46,37 @@ const extractCloudinaryPublicId = (imageUrl) => {
 };
 
 // ============================================================
+// RESTAURANT POPULATION
+// ============================================================
+//
+// IMPORTANT:
+// Restaurant does NOT have a `menu` field.
+//
+// Therefore we only populate fields that actually exist on
+// the Restaurant schema.
+//
+// Menu is loaded separately where needed using:
+// Menu.findOne({ restaurant: restaurant._id })
+//
+// Password is explicitly excluded.
+// ============================================================
+
+const restaurantPopulation = [
+  {
+    path: "owner",
+    model: "User",
+    select:
+      "_id name username firstName lastName email role avatar avatarUrl profileImage schedule",
+  },
+  {
+    path: "employers",
+    model: "User",
+    select:
+      "_id name username firstName lastName email role avatar avatarUrl profileImage schedule",
+  },
+];
+
+// ============================================================
 // CREATE RESTAURANT
 // ============================================================
 
@@ -61,9 +86,14 @@ exports.createRestaurant = catchAsync(async (req, res) => {
     owner: req.user._id,
   });
 
-  console.log(restaurant);
+  const populatedRestaurant = await Restaurant.findById(restaurant._id)
+    .populate(restaurantPopulation[0])
+    .populate(restaurantPopulation[1]);
 
-  res.status(201).json(restaurant);
+  return res.status(201).json({
+    success: true,
+    restaurant: populatedRestaurant,
+  });
 });
 
 // ============================================================
@@ -73,9 +103,14 @@ exports.createRestaurant = catchAsync(async (req, res) => {
 exports.getRestaurants = catchAsync(async (req, res) => {
   const restaurants = await Restaurant.find({
     owner: req.user._id,
-  }).populate("owner");
+  })
+    .populate(restaurantPopulation[0])
+    .populate(restaurantPopulation[1]);
 
-  res.json(restaurants);
+  return res.status(200).json({
+    success: true,
+    restaurants,
+  });
 });
 
 // ============================================================
@@ -83,7 +118,9 @@ exports.getRestaurants = catchAsync(async (req, res) => {
 // ============================================================
 
 exports.getRestaurant = catchAsync(async (req, res) => {
-  const restaurant = await Restaurant.findById(req.params.id);
+  const restaurant = await Restaurant.findById(req.params.id)
+    .populate(restaurantPopulation[0])
+    .populate(restaurantPopulation[1]);
 
   if (!restaurant) {
     return res.status(404).json({
@@ -92,7 +129,109 @@ exports.getRestaurant = catchAsync(async (req, res) => {
     });
   }
 
-  res.json(restaurant);
+  return res.status(200).json({
+    success: true,
+    restaurant,
+  });
+});
+
+// ============================================================
+// GET EMPLOYER RESTAURANT
+// ============================================================
+//
+// Finds the restaurant linked to the employer.
+//
+// Returns:
+// - restaurant
+// - populated owner
+// - populated employers
+// - employer schedules
+// - menu belonging to this restaurant
+//
+// Menu is fetched separately because Restaurant does NOT have
+// a `menu` field.
+//
+// Menu.restaurant -> Restaurant
+// ============================================================
+
+exports.getEmployerRestaurant = catchAsync(async (req, res) => {
+  const { id } = req.params;
+
+  const user = await User.findById(id).select(
+    "_id name username firstName lastName email role avatar avatarUrl profileImage schedule",
+  );
+
+  if (!user) {
+    return res.status(404).json({
+      success: false,
+      message: "User not found",
+    });
+  }
+
+  if (user.role !== "employer" && user.role !== "advertisor") {
+    return res.status(403).json({
+      success: false,
+      message: "This user is not an employer or advertisor",
+    });
+  }
+
+  // ----------------------------------------------------------
+  // FIND RESTAURANT
+  // ----------------------------------------------------------
+
+  const restaurant = await Restaurant.findOne({
+    employers: user._id,
+  })
+    .populate(restaurantPopulation[0])
+    .populate(restaurantPopulation[1]);
+
+  if (!restaurant) {
+    return res.status(404).json({
+      success: false,
+      message: "Restaurant not found for this employer",
+    });
+  }
+
+  // ----------------------------------------------------------
+  // FIND MENU
+  // ----------------------------------------------------------
+  //
+  // Menu has:
+  //
+  // restaurant: ObjectId -> Restaurant
+  //
+  // So we find the menu directly using the restaurant ID.
+  //
+  // We explicitly exclude `restaurant`, just like excluding
+  // password from User.
+  // ----------------------------------------------------------
+
+  const menu = await Menu.findOne({
+    restaurant: restaurant._id,
+  })
+    .select("-restaurant")
+    .populate({
+      path: "items",
+      model: "MenuItem",
+    })
+    .populate({
+      path: "mainCategory",
+      model: "MainCategory",
+    })
+    .populate({
+      path: "categories",
+      model: "Category",
+    });
+
+  // ----------------------------------------------------------
+  // RESPONSE
+  // ----------------------------------------------------------
+
+  return res.status(200).json({
+    success: true,
+    restaurant,
+    menu,
+  });
 });
 
 // ============================================================
@@ -139,8 +278,9 @@ exports.updateRestaurant = catchAsync(async (req, res) => {
     facebook,
     instagram,
     whatsAppNumber,
+    hasFidelization,
+    fidelization,
   } = req.body;
-  console.log(whatsAppNumber);
 
   // ==========================================================
   // BASIC INFORMATION
@@ -201,6 +341,50 @@ exports.updateRestaurant = catchAsync(async (req, res) => {
     restaurant.whatsAppNumber = whatsAppNumber;
   }
 
+  if (hasFidelization !== undefined) {
+    restaurant.hasFidelization =
+      hasFidelization === true || hasFidelization === "true";
+  }
+
+  if (fidelization !== undefined) {
+    const menuItemId = fidelization?.menuItem || null;
+    const maxStamps = Number(fidelization?.maxStamps);
+
+    if (
+      restaurant.hasFidelization &&
+      (!menuItemId ||
+        !Number.isInteger(maxStamps) ||
+        maxStamps < 1 ||
+        maxStamps > 100)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Fidelization requires a menu item and maxStamps between 1 and 100.",
+      });
+    }
+
+    if (menuItemId) {
+      const MenuItem = require("../models/MenuItem");
+      const menuItem = await MenuItem.findOne({
+        _id: menuItemId,
+        restaurant: restaurant._id,
+      });
+
+      if (!menuItem) {
+        return res.status(400).json({
+          success: false,
+          message: "The loyalty menu item must belong to this restaurant.",
+        });
+      }
+    }
+
+    restaurant.fidelization = {
+      menuItem: menuItemId,
+      maxStamps: Number.isInteger(maxStamps) ? maxStamps : 10,
+    };
+  }
+
   // ==========================================================
   // OPENING HOURS
   // ==========================================================
@@ -220,31 +404,23 @@ exports.updateRestaurant = catchAsync(async (req, res) => {
   }
 
   // ==========================================================
-  // IMAGE CHANGES ARE NOT HANDLED HERE
-  // ==========================================================
-
-  // Main image:
-  //
-  // PUT /api/restaurants/:id/mainImage
-  //
-  // Logo:
-  //
-  // PUT /api/restaurants/:id/logo
-
-  // ==========================================================
   // SAVE
   // ==========================================================
 
   await restaurant.save();
 
   // ==========================================================
-  // RESPONSE
+  // RETURN POPULATED RESTAURANT
   // ==========================================================
+
+  const populatedRestaurant = await Restaurant.findById(restaurant._id)
+    .populate(restaurantPopulation[0])
+    .populate(restaurantPopulation[1]);
 
   return res.status(200).json({
     success: true,
     message: "Restaurant updated successfully",
-    restaurant,
+    restaurant: populatedRestaurant,
   });
 });
 
@@ -276,9 +452,13 @@ exports.deleteRestaurant = catchAsync(async (req, res) => {
     });
   }
 
+  // ==========================================================
+  // DELETE
+  // ==========================================================
+
   await Restaurant.findByIdAndDelete(req.params.id);
 
-  res.json({
+  return res.status(200).json({
     success: true,
     message: "Restaurant deleted successfully",
   });
@@ -356,14 +536,18 @@ exports.updateLogo = catchAsync(async (req, res) => {
   await restaurant.save();
 
   // ==========================================================
-  // RESPONSE
+  // RETURN POPULATED RESTAURANT
   // ==========================================================
 
-  res.json({
+  const populatedRestaurant = await Restaurant.findById(restaurant._id)
+    .populate(restaurantPopulation[0])
+    .populate(restaurantPopulation[1]);
+
+  return res.json({
     success: true,
     message: "Logo updated successfully",
     logo: restaurant.logo,
-    restaurant,
+    restaurant: populatedRestaurant,
   });
 });
 
@@ -437,11 +621,6 @@ exports.updateMainImage = catchAsync(async (req, res) => {
 
     const oldImageUrl = restaurant.mainImage;
 
-    console.log("======================================");
-    console.log("OLD MAIN IMAGE");
-    console.log(oldImageUrl);
-    console.log("======================================");
-
     // ========================================================
     // UPLOAD NEW IMAGE
     // ========================================================
@@ -470,12 +649,6 @@ exports.updateMainImage = catchAsync(async (req, res) => {
 
     uploadedImagePublicId = result.public_id;
 
-    console.log("======================================");
-    console.log("NEW MAIN IMAGE");
-    console.log("URL:", result.secure_url);
-    console.log("PUBLIC ID:", result.public_id);
-    console.log("======================================");
-
     // ========================================================
     // UPDATE DATABASE
     // ========================================================
@@ -492,29 +665,29 @@ exports.updateMainImage = catchAsync(async (req, res) => {
       try {
         const oldPublicId = extractCloudinaryPublicId(oldImageUrl);
 
-        console.log("Old Cloudinary public ID:", oldPublicId);
-
         if (oldPublicId) {
           const deleteResult = await cloudinary.uploader.destroy(oldPublicId, {
             resource_type: "image",
           });
 
-          console.log("Cloudinary old image delete result:", deleteResult);
-
-          if (deleteResult.result === "ok") {
-            console.log("Old main image deleted successfully");
-          } else {
-            console.log("Old main image was not deleted:", deleteResult);
+          if (deleteResult.result !== "ok") {
+            console.warn("Cloudinary old image was not deleted:", deleteResult);
           }
-        } else {
-          console.log("Could not extract old Cloudinary public ID");
         }
       } catch (error) {
-        // Do NOT fail the entire update just because
-        // old-image cleanup failed.
+        // Do NOT fail the entire update because the old image
+        // cleanup failed.
         console.error("Failed to delete old main image:", error);
       }
     }
+
+    // ========================================================
+    // RETURN POPULATED RESTAURANT
+    // ========================================================
+
+    const populatedRestaurant = await Restaurant.findById(restaurant._id)
+      .populate(restaurantPopulation[0])
+      .populate(restaurantPopulation[1]);
 
     // ========================================================
     // RESPONSE
@@ -524,7 +697,7 @@ exports.updateMainImage = catchAsync(async (req, res) => {
       success: true,
       message: "Main image updated successfully",
       image: restaurant.mainImage,
-      restaurant,
+      restaurant: populatedRestaurant,
     });
   } catch (error) {
     console.error("======================================");
@@ -538,8 +711,6 @@ exports.updateMainImage = catchAsync(async (req, res) => {
 
     if (uploadedImagePublicId) {
       try {
-        console.log("Cleaning up newly uploaded image:", uploadedImagePublicId);
-
         await cloudinary.uploader.destroy(uploadedImagePublicId, {
           resource_type: "image",
         });

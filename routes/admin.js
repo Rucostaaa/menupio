@@ -10,6 +10,7 @@ const {
   createRestaurant,
   createSingleProduct,
   getAllMenus,
+  updateAdminUserRole,
 } = require("../controllers/admin");
 const auth = require("../middleware/auth");
 
@@ -34,5 +35,5 @@ router
   .post(auth, cloneMenu)
   .put(auth, updateMenu)
   .delete(auth, deleteMenu);
-
+router.patch("/users/:id/role", auth, updateAdminUserRole);
 module.exports = router;
