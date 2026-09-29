@@ -20,6 +20,49 @@ exports.getMenuItems = catchAsync(async (req, res) => {
 
   res.json(items);
 });
+exports.getAllMenuItems = catchAsync(async (req, res) => {
+  const items = await MenuItem.find({ owner: req.params.id }).lean();
+
+  const siteItems = items.map((item) => ({
+    name: {
+      pt: item?.name?.pt || "",
+      en: item?.name?.en || "",
+      es: item?.name?.es || "",
+      fr: item?.name?.fr || "",
+      de: item?.name?.de || "",
+      it: item?.name?.it || "",
+      nl: item?.name?.nl || "",
+    },
+
+    description: {
+      pt: item?.description?.pt || "",
+      en: item?.description?.en || "",
+      es: item?.description?.es || "",
+      fr: item?.description?.fr || "",
+      de: item?.description?.de || "",
+      it: item?.description?.it || "",
+      nl: item?.description?.nl || "",
+    },
+
+    image: Array.isArray(item?.image) ? item.image : [],
+
+    ingredients: Array.isArray(item?.ingredients)
+      ? item.ingredients.map((ingredient) => ({
+          pt: ingredient?.pt || "",
+          en: ingredient?.en || "",
+          es: ingredient?.es || "",
+          fr: ingredient?.fr || "",
+          de: ingredient?.de || "",
+          it: ingredient?.it || "",
+          nl: ingredient?.nl || "",
+        }))
+      : [],
+
+    alerts: Array.isArray(item?.alerts) ? item.alerts : [],
+  }));
+
+  res.json(siteItems);
+});
 
 exports.getMenuItem = catchAsync(async (req, res) => {
   const item = await MenuItem.findById(req.params.id);
@@ -104,8 +147,23 @@ exports.createProductsBulk = catchAsync(async (req, res) => {
     updated: [],
   };
 
+  const normalizeTranslations = (value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return {};
+    }
+
+    return Object.entries(value).reduce((result, [language, text]) => {
+      result[language] = typeof text === "string" ? text.trim() : "";
+
+      return result;
+    }, {});
+  };
+
   for (const product of products) {
-    const namePt = product?.name?.pt?.trim();
+    const name = normalizeTranslations(product?.name);
+    const description = normalizeTranslations(product?.description);
+
+    const namePt = name.pt;
 
     if (!namePt) {
       return res.status(400).json({
@@ -117,16 +175,16 @@ exports.createProductsBulk = catchAsync(async (req, res) => {
     // Don't allow the client to control these fields
     const { _id, id, owner, ...productData } = product;
 
-    // Normalize
-    productData.name = {
-      pt: productData.name?.pt?.trim() || "",
-      en: productData.name?.en?.trim() || "",
-    };
+    // Normalize multilingual fields
+    productData.name = name;
+    productData.description = description;
 
     productData.models = Array.isArray(productData.models)
       ? productData.models
       : [];
-
+    productData.alerts = Array.isArray(productData.alerts)
+      ? productData.alerts
+      : [];
     productData.allergens = Array.isArray(productData.allergens)
       ? productData.allergens
       : [];
@@ -134,7 +192,7 @@ exports.createProductsBulk = catchAsync(async (req, res) => {
     productData.available =
       typeof productData.available === "boolean" ? productData.available : true;
 
-    // Find existing product by trimmed PT name
+    // Find existing product by Portuguese name
     const existingProduct = await MenuItem.findOne({
       owner: req.user._id,
       "name.pt": {

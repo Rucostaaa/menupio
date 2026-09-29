@@ -127,7 +127,6 @@ const createBooking = async (req, res) => {
       --------------------------------------------------- */
 
       const paymentEnabled = restaurant.paymentEnabled === true;
-      console.log("paymentEnabled", paymentEnabled);
 
       /* ===================================================
          ONLINE BOOKING WITHOUT PAYMENT
@@ -1073,7 +1072,6 @@ const updateBookingPayment = async (req, res) => {
   try {
     const { bookingId } = req.params;
     const { paymentIntentId } = req.body || {};
-    console.log("id", bookingId);
 
     if (!isValidObjectId(bookingId)) {
       return res.status(400).json({

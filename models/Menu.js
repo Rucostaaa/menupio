@@ -43,10 +43,19 @@ const menuSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    categorySystem: String,
     items: [
       {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "MenuItem",
+        item: {
+          type: mongoose.Schema.Types.ObjectId,
+          required: true,
+          refPath: "items.itemModel",
+        },
+        itemModel: {
+          type: String,
+          required: true,
+          enum: ["MenuItem", "SiteItem"],
+        },
       },
     ],
     mainCategory: [
@@ -54,11 +63,19 @@ const menuSchema = new mongoose.Schema(
         type: mongoose.Schema.Types.ObjectId,
         ref: "MainCategory",
       },
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "SiteMainCategory",
+      },
     ],
     categories: [
       {
         type: mongoose.Schema.Types.ObjectId,
         ref: "Category",
+      },
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "SiteCategory",
       },
     ],
 

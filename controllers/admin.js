@@ -1,5 +1,8 @@
 const MenuItem = require("../models/MenuItem");
 const Category = require("../models/Category");
+const SiteItem = require("../models/SiteItem");
+const SiteCategory = require("../models/SiteCategory");
+
 const User = require("../models/User");
 const Restaurant = require("../models/Restaurant");
 const Menu = require("../models/Menu");
@@ -186,7 +189,6 @@ const updateAdminUserRole = async (req, res) => {
   try {
     const { id } = req.params;
     const { role } = req.body;
-    console.log("role", req?.user);
 
     // Only admins can change user roles
     if (req.user?.role !== "Admin") {
@@ -199,6 +201,8 @@ const updateAdminUserRole = async (req, res) => {
     const allowedRoles = [
       "admin",
       "owner",
+      "store",
+
       "employer",
       "advertisor",
       "customer",
@@ -313,7 +317,211 @@ const bulkCategories = catchAsync(async (req, res) => {
     results,
   });
 });
-const cloneMenu = (req, res) => {};
+
+const bulkMenu = async (req, res) => {
+  const session = await mongoose.startSession();
+
+  try {
+    const { id: restaurantId } = req.params;
+    const { restaurant: restaurantData, menu: menuData, siteItems } = req.body;
+
+    // ---------------------------------------------------------
+    // 1. VALIDATION
+    // ---------------------------------------------------------
+
+    if (!mongoose.Types.ObjectId.isValid(restaurantId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid restaurant ID",
+      });
+    }
+
+    if (!Array.isArray(siteItems) || siteItems.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "siteItems must be a non-empty array",
+      });
+    }
+
+    // ---------------------------------------------------------
+    // 2. FIND RESTAURANT
+    // ---------------------------------------------------------
+
+    const restaurant = await Restaurant.findById(restaurantId).session(session);
+
+    if (!restaurant) {
+      return res.status(404).json({
+        success: false,
+        message: "Restaurant not found",
+      });
+    }
+
+    // ---------------------------------------------------------
+    // 3. FIND SITE ITEMS
+    // ---------------------------------------------------------
+
+    const items = await SiteItem.find({
+      _id: { $in: siteItems },
+    }).session(session);
+
+    if (items.length !== siteItems.length) {
+      const foundIds = new Set(items.map((item) => item._id.toString()));
+
+      const missingItems = siteItems.filter(
+        (id) => !foundIds.has(id.toString()),
+      );
+
+      return res.status(400).json({
+        success: false,
+        message: "Some SiteItems were not found",
+        missingItems,
+      });
+    }
+
+    // ---------------------------------------------------------
+    // 4. GET UNIQUE SITE CATEGORY IDS FROM SITE ITEMS
+    // ---------------------------------------------------------
+
+    const siteCategoryIds = new Set();
+
+    for (const item of items) {
+      if (item.category) {
+        siteCategoryIds.add(item.category.toString());
+      }
+    }
+
+    // ---------------------------------------------------------
+    // 5. FIND SITE CATEGORIES
+    // ---------------------------------------------------------
+
+    const siteCategories = await SiteCategory.find({
+      _id: {
+        $in: [...siteCategoryIds],
+      },
+    }).session(session);
+
+    if (siteCategories.length !== siteCategoryIds.size) {
+      return res.status(400).json({
+        success: false,
+        message: "Some SiteCategories referenced by SiteItems were not found",
+      });
+    }
+
+    // ---------------------------------------------------------
+    // 6. GET UNIQUE MAIN CATEGORIES FROM SITE CATEGORIES
+    // ---------------------------------------------------------
+
+    const siteMainCategoryIds = new Set();
+
+    for (const category of siteCategories) {
+      if (category.mainCategory) {
+        siteMainCategoryIds.add(category.mainCategory.toString());
+      }
+    }
+
+    // ---------------------------------------------------------
+    // 7. UPDATE RESTAURANT
+    // ---------------------------------------------------------
+
+    if (restaurantData && typeof restaurantData === "object") {
+      const restaurantFieldsToUpdate = {
+        ...restaurantData,
+      };
+
+      // Fields that bulk menu MUST NOT modify
+      delete restaurantFieldsToUpdate.fidelization;
+      delete restaurantFieldsToUpdate.hasFidelization;
+      delete restaurantFieldsToUpdate.employers;
+      delete restaurantFieldsToUpdate.logo;
+      delete restaurantFieldsToUpdate.menus;
+      delete restaurantFieldsToUpdate.owner;
+      delete restaurantFieldsToUpdate.stripe;
+      delete restaurantFieldsToUpdate._id;
+
+      Object.assign(restaurant, restaurantFieldsToUpdate);
+    }
+
+    // ---------------------------------------------------------
+    // 8. PREPARE MENU
+    // ---------------------------------------------------------
+
+    const menuFields = {
+      ...(menuData || {}),
+    };
+
+    // These are generated by this endpoint
+    delete menuFields.restaurant;
+    delete menuFields.items;
+    delete menuFields.categories;
+    delete menuFields.mainCategory;
+    delete menuFields._id;
+
+    const menu = new Menu({
+      ...menuFields,
+
+      restaurant: restaurant._id,
+
+      // SiteItems only
+      items: items.map((item) => ({
+        item: item._id,
+        itemModel: "SiteItem",
+      })),
+
+      // SiteCategories from SiteItems
+      categories: [...siteCategoryIds],
+
+      // MainCategories from SiteCategories
+      mainCategory: [...siteMainCategoryIds],
+    });
+
+    // ---------------------------------------------------------
+    // 9. SAVE MENU
+    // ---------------------------------------------------------
+
+    await menu.save({ session });
+
+    // ---------------------------------------------------------
+    // 10. ADD MENU TO RESTAURANT
+    // ---------------------------------------------------------
+
+    restaurant.menus.push(menu._id);
+
+    await restaurant.save({ session });
+
+    // ---------------------------------------------------------
+    // 11. COMMIT
+    // ---------------------------------------------------------
+
+    await session.commitTransaction();
+
+    return res.status(201).json({
+      success: true,
+      message: "Bulk menu created successfully",
+
+      restaurant,
+      menu,
+
+      stats: {
+        siteItems: items.length,
+        siteCategories: siteCategoryIds.size,
+        siteMainCategories: siteMainCategoryIds.size,
+      },
+    });
+  } catch (error) {
+    await session.abortTransaction();
+
+    console.error("bulkMenu error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to create bulk menu",
+      error: error.message,
+    });
+  } finally {
+    await session.endSession();
+  }
+};
+
 const updateMenu = (req, res) => {};
 const deleteMenu = (req, res) => {};
 const createRestaurant = (req, res) => {};
@@ -325,7 +533,7 @@ module.exports = {
   getAllProducts,
   bulkProducts,
   getAllUsers,
-  cloneMenu,
+  bulkMenu,
   updateMenu,
   bulkCategories,
   deleteMenu,

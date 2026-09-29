@@ -16,6 +16,10 @@ const cartSchema = new mongoose.Schema(
         type: mongoose.Schema.Types.ObjectId,
         ref: "MenuItem",
       },
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "SiteItem",
+      },
     ],
     status: {
       type: String,

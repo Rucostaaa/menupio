@@ -16,6 +16,8 @@ const {
   deleteMainCategory,
   createMainCategory,
   getBusinessMainCategories,
+  getBusinessMainCategoryJson,
+  getAllCategories,
 } = require("../controllers/category");
 
 router
@@ -24,11 +26,14 @@ router
   .post(auth, createCategory)
   .put(auth, updateCategories);
 router.put("/reorder", auth, reorderCategories);
+router.route("/all/:id").get(auth, getAllCategories);
 router
   .route("/main-category")
   .get(auth, getMainCategories)
   .post(auth, createMainCategory)
   .put(auth, updateMainCategories);
+router.route("/main-categories").get(auth, getBusinessMainCategoryJson);
+
 router
   .route("/main-category/:id")
   .get(getBusinessMainCategories)

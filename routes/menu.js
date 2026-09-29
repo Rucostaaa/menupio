@@ -11,6 +11,8 @@ const {
   getRestaurantMenus,
   getMenu,
   getInitialData,
+  createSiteMenu,
+  getAllMenus,
 } = require("../controllers/menu");
 
 /*
@@ -23,7 +25,8 @@ router
   .route("/")
   .get(auth, getMenus)
   .post(auth, upload.single("mainImage"), createMenu);
-
+router.route("/all").get(auth, getAllMenus);
+router.route("/menu").post(auth, upload.single("mainImage"), createSiteMenu);
 /*
 |--------------------------------------------------------------------------
 | Restaurant menus

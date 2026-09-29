@@ -1,6 +1,7 @@
 const Menu = require("../models/Menu");
 const Restaurant = require("../models/Restaurant");
 const MenuItem = require("../models/MenuItem");
+const SiteItem = require("../models/SiteItem");
 
 const cloudinary = require("../utils/Claudinary");
 const mongoose = require("mongoose");
@@ -376,6 +377,429 @@ const createMenu = async (req, res) => {
   }
 };
 
+const createSiteMenu = async (req, res) => {
+  try {
+    const {
+      restaurant,
+      name,
+      slug,
+      items,
+      whatsAppButton = false,
+      headerImage = null,
+      hasAdverts = false,
+      isAdvert = false,
+      hasCustom = false,
+      mainCategory = [],
+      categories = [],
+      available = true,
+      type,
+      style,
+      settings = {},
+    } = req.body;
+
+    /*
+     * ============================================================
+     * VALIDATION
+     * ============================================================
+     */
+
+    if (!restaurant) {
+      return res.status(400).json({
+        success: false,
+        message: "Restaurant é obrigatório.",
+      });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(restaurant)) {
+      return res.status(400).json({
+        success: false,
+        message: "Restaurant inválido.",
+      });
+    }
+
+    if (!name?.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Nome do menu é obrigatório.",
+      });
+    }
+
+    if (!slug?.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Slug do menu é obrigatório.",
+      });
+    }
+
+    /*
+     * ============================================================
+     * RESTAURANT
+     * ============================================================
+     */
+
+    const restaurantDoc = await Restaurant.findById(restaurant);
+
+    if (!restaurantDoc) {
+      return res.status(404).json({
+        success: false,
+        message: "Restaurante não encontrado.",
+      });
+    }
+
+    /*
+     * ============================================================
+     * ITEMS
+     * ============================================================
+     *
+     * Frontend:
+     *
+     * items: [
+     *   "SITE_ITEM_ID_1",
+     *   "SITE_ITEM_ID_2"
+     * ]
+     *
+     * Database:
+     *
+     * items: [
+     *   {
+     *     item: "...",
+     *     itemModel: "SiteItems"
+     *   }
+     * ]
+     */
+
+    let itemIds = [];
+
+    if (items) {
+      if (Array.isArray(items)) {
+        itemIds = items;
+      } else {
+        try {
+          const parsed = JSON.parse(items);
+
+          if (Array.isArray(parsed)) {
+            itemIds = parsed;
+          }
+        } catch (error) {
+          return res.status(400).json({
+            success: false,
+            message: "Formato de items inválido.",
+          });
+        }
+      }
+    }
+
+    /*
+     * Normalizar IDs
+     */
+
+    itemIds = itemIds
+      .map((item) => {
+        if (typeof item === "string") {
+          return item;
+        }
+
+        if (item?._id) {
+          return String(item._id);
+        }
+
+        if (item?.item) {
+          return String(item.item);
+        }
+
+        return null;
+      })
+      .filter(Boolean);
+
+    /*
+     * Remover duplicados
+     */
+
+    itemIds = [...new Set(itemIds)];
+
+    /*
+     * Validar IDs
+     */
+
+    const invalidItemIds = itemIds.filter(
+      (id) => !mongoose.Types.ObjectId.isValid(id),
+    );
+
+    if (invalidItemIds.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Um ou mais SiteItems são inválidos.",
+        invalidItems: invalidItemIds,
+      });
+    }
+
+    /*
+     * ============================================================
+     * VALIDATE SITE ITEMS
+     * ============================================================
+     */
+
+    if (itemIds.length > 0) {
+      const siteItems = await SiteItem.find({
+        _id: {
+          $in: itemIds,
+        },
+      })
+        .select("_id")
+        .lean();
+
+      const foundIds = new Set(siteItems.map((item) => String(item._id)));
+
+      const missingIds = itemIds.filter((id) => !foundIds.has(String(id)));
+
+      if (missingIds.length > 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Um ou mais SiteItems não foram encontrados.",
+          missingItems: missingIds,
+        });
+      }
+    }
+
+    /*
+     * ============================================================
+     * MENU ITEMS
+     * ============================================================
+     */
+
+    const menuItems = itemIds.map((itemId) => ({
+      item: itemId,
+      itemModel: "SiteItem",
+    }));
+
+    /*
+     * ============================================================
+     * ARRAYS
+     * ============================================================
+     */
+
+    const normalizeArray = (value) => {
+      if (!value) {
+        return [];
+      }
+
+      if (Array.isArray(value)) {
+        return value;
+      }
+
+      try {
+        const parsed = JSON.parse(value);
+
+        return Array.isArray(parsed) ? parsed : [];
+      } catch (error) {
+        return [];
+      }
+    };
+
+    const normalizedCategories = normalizeArray(categories)
+      .map((category) => {
+        if (typeof category === "string") {
+          return category;
+        }
+
+        return category?._id || category?.id || null;
+      })
+      .filter(Boolean);
+
+    const normalizedMainCategories = normalizeArray(mainCategory)
+      .map((category) => {
+        if (typeof category === "string") {
+          return category;
+        }
+
+        return category?._id || category?.id || null;
+      })
+      .filter(Boolean);
+
+    /*
+     * ============================================================
+     * CLOUDINARY - MAIN IMAGE
+     * ============================================================
+     *
+     * req.file vem do:
+     *
+     * upload.single("mainImage")
+     *
+     * Aqui fazemos o upload para Cloudinary e guardamos
+     * SOMENTE o secure_url no MongoDB.
+     */
+
+    let mainImage = null;
+
+    if (req.file) {
+      const result = await cloudinary.uploader.upload(req.file.path, {
+        folder: "menupio/menus",
+        resource_type: "image",
+      });
+
+      mainImage = result.secure_url;
+    }
+
+    /*
+     * ============================================================
+     * OWN ID
+     * ============================================================
+     */
+
+    const lastMenu = await Menu.findOne({
+      restaurant,
+    })
+      .sort({
+        ownId: -1,
+      })
+      .select("ownId")
+      .lean();
+
+    const ownId = lastMenu?.ownId ? Number(lastMenu.ownId) + 1 : 1;
+
+    /*
+     * ============================================================
+     * SLUG
+     * ============================================================
+     */
+
+    const cleanSlug = String(slug)
+      .trim()
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+
+    /*
+     * ============================================================
+     * DUPLICATE SLUG
+     * ============================================================
+     */
+
+    const existingMenu = await Menu.findOne({
+      restaurant,
+      slug: cleanSlug,
+    });
+
+    if (existingMenu) {
+      return res.status(409).json({
+        success: false,
+        message: "Já existe um menu com este slug neste restaurante.",
+      });
+    }
+
+    /*
+     * ============================================================
+     * CREATE MENU
+     * ============================================================
+     */
+
+    const menu = await Menu.create({
+      restaurant,
+
+      name: name.trim(),
+
+      slug: cleanSlug,
+
+      ownId,
+
+      whatsAppButton: whatsAppButton === true || whatsAppButton === "true",
+
+      /*
+       * Cloudinary HTTPS URL
+       */
+      mainImage,
+
+      /*
+       * Header continua a aceitar URL
+       */
+      headerImage: headerImage || null,
+
+      hasAdverts: hasAdverts === true || hasAdverts === "true",
+
+      isAdvert: isAdvert === true || isAdvert === "true",
+
+      hasCustom: hasCustom === true || hasCustom === "true",
+
+      /*
+       * ONLY SITE ITEMS
+       */
+      items: menuItems,
+
+      mainCategory: normalizedMainCategories,
+
+      categories: normalizedCategories,
+
+      available: available !== false && available !== "false",
+
+      type: type || "restaurant",
+
+      style: style || "modern",
+
+      settings,
+    });
+
+    /*
+     * ============================================================
+     * POPULATE RESPONSE
+     * ============================================================
+     */
+
+    const populatedMenu = await Menu.findById(menu._id)
+      .populate("restaurant")
+      .populate({
+        path: "items.item",
+        model: "SiteItem",
+      })
+      .lean();
+
+    /*
+     * ============================================================
+     * SUCCESS
+     * ============================================================
+     */
+
+    return res.status(201).json({
+      success: true,
+      message: "Menu criado com sucesso.",
+      menu: populatedMenu,
+    });
+  } catch (error) {
+    console.error("CREATE SITE MENU ERROR:", error);
+
+    /*
+     * Mongo duplicate
+     */
+
+    if (error?.code === 11000) {
+      return res.status(409).json({
+        success: false,
+        message: "Já existe um menu com estes dados.",
+        error: error.keyValue,
+      });
+    }
+
+    /*
+     * Mongoose validation
+     */
+
+    if (error?.name === "ValidationError") {
+      return res.status(400).json({
+        success: false,
+        message: "Dados do menu inválidos.",
+        errors: Object.values(error.errors).map((err) => err.message),
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: "Erro ao criar o menu.",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
+  }
+};
+
 // =====================================================
 // GET MENUS
 // =====================================================
@@ -415,7 +839,6 @@ const getMenus = async (req, res) => {
     // =====================================================
     // RESPONSE
     // =====================================================
-    console.log(menus);
 
     return res.status(200).json({
       success: true,
@@ -432,7 +855,51 @@ const getMenus = async (req, res) => {
     });
   }
 };
+const getAllMenus = async (req, res) => {
+  try {
+    // =====================================================
+    // AUTH
+    // =====================================================
 
+    if (!req.user?._id) {
+      return res.status(401).json({
+        success: false,
+        message: "Authentication required",
+      });
+    }
+
+    // =====================================================
+    // FIND MENUS
+    // =====================================================
+
+    const menus = await Menu.find({})
+      .populate("items")
+      .populate("categories")
+      .populate("mainCategory")
+      .populate("restaurant")
+      .sort({
+        createdAt: -1,
+      });
+
+    // =====================================================
+    // RESPONSE
+    // =====================================================
+
+    return res.status(200).json({
+      success: true,
+      count: menus.length,
+      menus,
+    });
+  } catch (error) {
+    console.error("getMenus error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to get menus",
+      error: error.message,
+    });
+  }
+};
 // =====================================================
 // GET SINGLE MENU
 // =====================================================
@@ -478,11 +945,10 @@ const getMenu = async (req, res) => {
         },
       })
       .populate("restaurant");
-
+    console.log(menu);
     // =====================================================
     // NOT FOUND
     // =====================================================
-    console.log("getmenu,mnu", menu);
 
     if (!menu) {
       return res.status(404).json({
@@ -512,12 +978,24 @@ const getMenu = async (req, res) => {
 const getInitialData = async (req, res) => {
   try {
     const { id } = req.params;
-    const { categories } = req.query;
+
+    console.log("req.params:", req.params);
+    console.log("req.query:", req.query);
+
+    // =========================================================
+    // PAGINATION
+    // =========================================================
+
     const page = Math.max(Number.parseInt(req.query.page, 10) || 1, 1);
+
     const limit = Math.min(
       Math.max(Number.parseInt(req.query.limit, 10) || 8, 1),
       50,
     );
+
+    // =========================================================
+    // VALIDATE MENU ID
+    // =========================================================
 
     if (!id) {
       return res.status(400).json({
@@ -533,56 +1011,100 @@ const getInitialData = async (req, res) => {
       });
     }
 
-    let categoryIds = [];
-
-    // =========================================================
-    // CATEGORIES FROM QUERY
-    // =========================================================
-
-    if (categories) {
-      categoryIds = Array.isArray(categories)
-        ? categories
-        : categories.split(",");
-
-      categoryIds = categoryIds
-        .map((categoryId) => categoryId.trim())
-        .filter(Boolean);
-
-      const invalidCategoryId = categoryIds.find(
-        (categoryId) => !mongoose.Types.ObjectId.isValid(categoryId),
-      );
-
-      if (invalidCategoryId) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid category ID",
-        });
-      }
-    }
-
     // =========================================================
     // GET MENU
     // =========================================================
 
     const menu = await Menu.findById(id)
-      .select("name items categories mainCategory restaurant hasAdverts")
-      .populate({
-        path: "categories",
-        select: "name order",
-      })
-      .populate({
-        path: "mainCategory",
-        select: "name categories order",
-        populate: {
-          path: "categories",
-          select: "name order",
-        },
-      })
+      .select(
+        "name items categories mainCategory restaurant hasAdverts categorySystem",
+      )
+
+      // =======================================================
+      // RESTAURANT
+      // =======================================================
+
       .populate({
         path: "restaurant",
+        model: "Restaurant",
       })
+
+      // =======================================================
+      // MENU ITEMS
+      // =======================================================
+
+      .populate({
+        path: "items.item",
+        model: "SiteItem",
+
+        populate: [
+          // -----------------------------------------------
+          // DIRECT SITE ITEM CATEGORY
+          // -----------------------------------------------
+
+          {
+            path: "category",
+            model: "SiteCategory",
+
+            populate: {
+              path: "siteMainCategory",
+              model: "SiteMainCategory",
+            },
+          },
+
+          // -----------------------------------------------
+          // IMAGE DOCUMENTS
+          // -----------------------------------------------
+
+          {
+            path: "images",
+            model: "Image",
+          },
+
+          // -----------------------------------------------
+          // RESTAURANT PLACEMENTS
+          // -----------------------------------------------
+
+          {
+            path: "placements.category",
+            model: "SiteCategory",
+
+            populate: {
+              path: "siteMainCategory",
+              model: "SiteMainCategory",
+            },
+          },
+        ],
+      })
+
+      // =======================================================
+      // MENU CATEGORIES
+      // =======================================================
+
+      .populate({
+        path: "categories",
+        model: "SiteCategory",
+
+        populate: {
+          path: "siteMainCategory",
+          model: "SiteMainCategory",
+        },
+      })
+
+      // =======================================================
+      // MENU MAIN CATEGORIES
+      // =======================================================
+
+      .populate({
+        path: "mainCategory",
+        model: "SiteMainCategory",
+      })
+
       .lean();
-    console.log("get initial data", menu);
+
+    // =========================================================
+    // MENU NOT FOUND
+    // =========================================================
 
     if (!menu) {
       return res.status(404).json({
@@ -592,100 +1114,366 @@ const getInitialData = async (req, res) => {
     }
 
     // =========================================================
-    // NO QUERY CATEGORIES
+    // NORMALIZE IDS
     // =========================================================
 
-    if (categoryIds.length === 0) {
-      /*
-       * MENU WITH MAIN CATEGORIES
-       *
-       * Load products from the first main category.
-       */
+    const normalizeId = (value) => {
+      if (!value) {
+        return null;
+      }
 
-      const firstMainCategory = Array.isArray(menu.mainCategory)
-        ? menu.mainCategory[0]
-        : null;
+      if (typeof value === "string" || typeof value === "number") {
+        return String(value);
+      }
 
-      if (firstMainCategory) {
-        const firstMainCategoryCategories = Array.isArray(
-          firstMainCategory.categories,
-        )
-          ? firstMainCategory.categories
-          : [];
+      if (value._id) {
+        return String(value._id);
+      }
 
-        categoryIds = firstMainCategoryCategories
-          .map((category) => {
-            if (typeof category === "string") {
-              return category;
-            }
+      if (value.id) {
+        return String(value.id);
+      }
 
-            return category?._id || category?.id || null;
-          })
-          .filter(Boolean)
-          .map((categoryId) => categoryId.toString());
-      } else {
-        /*
-         * SIMPLE MENU
-         *
-         * No main categories exist.
-         * Use the menu's normal categories.
-         */
+      return null;
+    };
 
-        const menuCategories = Array.isArray(menu.categories)
-          ? menu.categories
-          : [];
+    // =========================================================
+    // MENU CONFIG
+    // =========================================================
 
-        categoryIds = menuCategories
-          .map((category) => {
-            if (typeof category === "string") {
-              return category;
-            }
+    const restaurantId = normalizeId(menu.restaurant);
 
-            return category?._id || category?.id || null;
-          })
-          .filter(Boolean)
-          .map((categoryId) => categoryId.toString());
+    const categorySystem = menu.categorySystem || null;
+
+    const isSingleCategorySystem = categorySystem === "single";
+
+    console.log("MENU CATEGORY SYSTEM:", categorySystem);
+
+    console.log("IS SINGLE CATEGORY SYSTEM:", isSingleCategorySystem);
+
+    // =========================================================
+    // CATEGORY QUERY
+    // =========================================================
+
+    let requestedCategories = [];
+
+    const rawCategories = req.query.categories;
+
+    if (Array.isArray(rawCategories)) {
+      requestedCategories = rawCategories.flatMap((value) => {
+        if (typeof value !== "string") {
+          return [value];
+        }
+
+        return value
+          .split(",")
+          .map((item) => item.trim())
+          .filter(Boolean);
+      });
+    } else if (typeof rawCategories === "string") {
+      const trimmed = rawCategories.trim();
+
+      // -----------------------------------------------
+      // JSON ARRAY
+      // -----------------------------------------------
+
+      if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+        try {
+          const parsed = JSON.parse(trimmed);
+
+          if (Array.isArray(parsed)) {
+            requestedCategories = parsed;
+          }
+        } catch {
+          requestedCategories = trimmed
+            .split(",")
+            .map((item) => item.trim())
+            .filter(Boolean);
+        }
+      }
+
+      // -----------------------------------------------
+      // COMMA SEPARATED
+      // -----------------------------------------------
+      else {
+        requestedCategories = trimmed
+          .split(",")
+          .map((item) => item.trim())
+          .filter(Boolean);
       }
     }
 
     // =========================================================
-    // GET PRODUCTS
+    // FALLBACK CATEGORY ID
     // =========================================================
 
-    let items = [];
-    let totalItems = 0;
-
-    if (categoryIds.length > 0) {
-      const itemFilter = {
-        _id: {
-          $in: menu.items || [],
-        },
-        category: {
-          $in: categoryIds,
-        },
-      };
-
-      totalItems = await MenuItem.countDocuments(itemFilter);
-      items = await MenuItem.find(itemFilter)
-        .sort({ _id: 1 })
-        .skip((page - 1) * limit)
-        .limit(limit)
-        .lean();
+    if (requestedCategories.length === 0 && req.query.categoryId) {
+      requestedCategories = Array.isArray(req.query.categoryId)
+        ? req.query.categoryId
+        : [req.query.categoryId];
     }
+
+    console.log("requestedCategories:", requestedCategories);
+
+    // =========================================================
+    // NORMALIZE / VALIDATE CATEGORY IDS
+    // =========================================================
+
+    const validCategoryIds = requestedCategories
+      .map((value) => String(value).trim())
+      .filter((value) => mongoose.Types.ObjectId.isValid(value));
+
+    const categoryFilterWasRequested = requestedCategories.length > 0;
+
+    const categorySet = new Set(validCategoryIds);
+
+    console.log("validCategoryIds:", validCategoryIds);
+
+    console.log("categorySet:", [...categorySet]);
+
+    // =========================================================
+    // MENU ITEMS
+    // =========================================================
+
+    const menuItems = (menu.items || [])
+      .filter(
+        (menuItem) =>
+          menuItem && menuItem.item && menuItem.itemModel === "SiteItem",
+      )
+      .map((menuItem) => menuItem.item)
+      .filter((item) => item && item._id);
+
+    console.log("MENU ITEMS COUNT:", menuItems.length);
+
+    console.log(
+      "MENU ITEMS:",
+      menuItems.map((item) => ({
+        id: String(item._id),
+        name: item?.name?.pt || item?.name?.en || "",
+        category: normalizeId(item.category),
+        placements: Array.isArray(item.placements)
+          ? item.placements.map((placement) => ({
+              restaurant: normalizeId(placement?.restaurant),
+              category: normalizeId(placement?.category),
+            }))
+          : [],
+      })),
+    );
+
+    // =========================================================
+    // SEARCH
+    // =========================================================
+
+    const search = String(req.query.search || "")
+      .trim()
+      .toLowerCase();
+
+    console.log("SEARCH:", search || "(none)");
+
+    // =========================================================
+    // FILTER ITEMS
+    // =========================================================
+
+    let filteredItems = menuItems.filter((item) => {
+      console.log("CHECKING ITEM:", String(item._id));
+
+      // =====================================================
+      // SEARCH
+      // =====================================================
+
+      if (search) {
+        const searchableValues = [
+          item?.name?.pt,
+          item?.name?.["pt-PT"],
+          item?.name?.en,
+          item?.name?.["en-US"],
+          item?.name?.es,
+
+          item?.description?.pt,
+          item?.description?.["pt-PT"],
+          item?.description?.en,
+          item?.description?.["en-US"],
+          item?.description?.es,
+        ]
+          .filter(Boolean)
+          .map((value) => String(value).toLowerCase());
+
+        const matchesSearch = searchableValues.some((value) =>
+          value.includes(search),
+        );
+
+        console.log("matchesSearch:", matchesSearch);
+
+        if (!matchesSearch) {
+          return false;
+        }
+      }
+
+      // =====================================================
+      // NO CATEGORY FILTER
+      // =====================================================
+
+      if (!categoryFilterWasRequested) {
+        console.log("NO CATEGORY FILTER -> KEEP ITEM");
+
+        return true;
+      }
+
+      // =====================================================
+      // CATEGORY FILTER REQUESTED
+      // BUT NO VALID IDS
+      // =====================================================
+
+      if (categorySet.size === 0) {
+        console.log("CATEGORY FILTER REQUESTED BUT NO VALID IDS");
+
+        return false;
+      }
+
+      // =====================================================
+      // SINGLE CATEGORY SYSTEM
+      //
+      // SiteItem:
+      //
+      // category: SiteCategory
+      //
+      // =====================================================
+
+      if (isSingleCategorySystem) {
+        const itemCategoryId = normalizeId(item.category);
+
+        const matchesDirectCategory = Boolean(
+          itemCategoryId && categorySet.has(itemCategoryId),
+        );
+
+        console.log("SINGLE CATEGORY CHECK:", {
+          itemId: String(item._id),
+          itemCategoryId,
+          requestedCategories: [...categorySet],
+          matchesDirectCategory,
+        });
+
+        return matchesDirectCategory;
+      }
+
+      // =====================================================
+      // NORMAL CATEGORY SYSTEM
+      //
+      // SiteItem:
+      //
+      // placements[].category
+      //
+      // =====================================================
+
+      const placements = Array.isArray(item.placements) ? item.placements : [];
+
+      const matchesPlacement = placements.some((placement) => {
+        if (!placement) {
+          return false;
+        }
+
+        const placementRestaurant = normalizeId(placement.restaurant);
+
+        const placementCategory = normalizeId(placement.category);
+
+        // ---------------------------------------------
+        // RESTAURANT MUST MATCH
+        // ---------------------------------------------
+
+        if (restaurantId && placementRestaurant !== restaurantId) {
+          return false;
+        }
+
+        // ---------------------------------------------
+        // CATEGORY MUST MATCH
+        // ---------------------------------------------
+
+        return categorySet.has(placementCategory);
+      });
+
+      console.log("NORMAL CATEGORY CHECK:", {
+        itemId: String(item._id),
+        restaurantId,
+        placements: placements.map((placement) => ({
+          restaurant: normalizeId(placement?.restaurant),
+          category: normalizeId(placement?.category),
+        })),
+        matchesPlacement,
+      });
+
+      return matchesPlacement;
+    });
+
+    // =========================================================
+    // PRESERVE MENU ORDER
+    // =========================================================
+
+    const originalOrder = new Map();
+
+    menuItems.forEach((item, index) => {
+      originalOrder.set(String(item._id), index);
+    });
+
+    filteredItems.sort((a, b) => {
+      return (
+        (originalOrder.get(String(a._id)) ?? 999999) -
+        (originalOrder.get(String(b._id)) ?? 999999)
+      );
+    });
+
+    // =========================================================
+    // PAGINATION
+    // =========================================================
+
+    const totalItems = filteredItems.length;
+
+    const start = (page - 1) * limit;
+
+    const end = start + limit;
+
+    const items = filteredItems.slice(start, end);
+
+    // =========================================================
+    // RESULT DEBUG
+    // =========================================================
+
+    console.log("================ RESULT DEBUG ================");
+
+    console.log("Menu:", String(menu._id));
+
+    console.log("Category system:", categorySystem);
+
+    console.log("Total menu items:", menuItems.length);
+
+    console.log("Total matching items:", totalItems);
+
+    console.log("Returning items:", items.length);
+
+    console.log(
+      "Returned item names:",
+      items.map((item) => item?.name?.pt || item?.name?.en || String(item._id)),
+    );
+
+    console.log("==============================================");
 
     // =========================================================
     // RESPONSE
     // =========================================================
+
     return res.status(200).json({
       success: true,
+
       menu: {
         ...menu,
+
         items,
+
         pagination: {
           page,
           limit,
           total: totalItems,
           hasMore: page * limit < totalItems,
+          totalPages: Math.ceil(totalItems / limit),
         },
       },
     });
@@ -1235,4 +2023,6 @@ module.exports = {
   deleteMenu,
   getRestaurantMenus,
   getInitialData,
+  createSiteMenu,
+  getAllMenus,
 };

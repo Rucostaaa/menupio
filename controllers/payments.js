@@ -40,13 +40,6 @@ const stripeWebhook = async (req, res) => {
     });
   }
 
-  console.log("========================================");
-  console.log("STRIPE WEBHOOK RECEIVED");
-  console.log("Event:", event.type);
-  console.log("Event ID:", event.id);
-  console.log("Connected account:", event.account || "platform");
-  console.log("========================================");
-
   try {
     switch (event.type) {
       /*
@@ -54,8 +47,6 @@ const stripeWebhook = async (req, res) => {
        */
       case "payment_intent.processing": {
         const paymentIntent = event.data.object;
-
-        console.log("PaymentIntent processing:", paymentIntent.id);
 
         const booking = await Booking.findOne({
           "payment.stripePaymentIntentId": paymentIntent.id,
@@ -82,12 +73,6 @@ const stripeWebhook = async (req, res) => {
 
         await booking.save();
 
-        console.log(
-          "Booking payment set to processing:",
-          booking._id.toString(),
-          paymentIntent,
-        );
-
         break;
       }
 
@@ -97,22 +82,9 @@ const stripeWebhook = async (req, res) => {
       case "payment_intent.succeeded": {
         const paymentIntent = event.data.object;
 
-        console.log("========================================");
-        console.log("PAYMENT INTENT SUCCEEDED");
-        console.log("PaymentIntent ID:", paymentIntent.id);
-        console.log("Amount:", paymentIntent.amount);
-        console.log("Currency:", paymentIntent.currency);
-        console.log("Metadata:", paymentIntent.metadata);
-        console.log("========================================");
-
         const booking = await Booking.findOne({
           "payment.stripePaymentIntentId": paymentIntent.id,
         });
-
-        console.log(
-          "Booking lookup result:",
-          booking ? booking._id.toString() : "NOT FOUND",
-        );
 
         if (!booking) {
           console.error(
@@ -151,14 +123,6 @@ const stripeWebhook = async (req, res) => {
 
         await booking.save();
 
-        console.log("========================================");
-        console.log("✅ BOOKING PAYMENT CONFIRMED");
-        console.log("Booking:", booking._id.toString());
-        console.log("PaymentIntent:", paymentIntent.id);
-        console.log("Booking status:", booking.status);
-        console.log("Payment status:", booking.payment.status);
-        console.log("========================================");
-
         break;
       }
 
@@ -167,8 +131,6 @@ const stripeWebhook = async (req, res) => {
        */
       case "payment_intent.payment_failed": {
         const paymentIntent = event.data.object;
-
-        console.log("PaymentIntent failed:", paymentIntent.id);
 
         const booking = await Booking.findOne({
           "payment.stripePaymentIntentId": paymentIntent.id,
@@ -205,11 +167,6 @@ const stripeWebhook = async (req, res) => {
 
         await booking.save();
 
-        console.log(
-          "Booking payment marked as failed:",
-          booking._id.toString(),
-        );
-
         break;
       }
 
@@ -218,8 +175,6 @@ const stripeWebhook = async (req, res) => {
        */
       case "payment_intent.canceled": {
         const paymentIntent = event.data.object;
-
-        console.log("PaymentIntent canceled:", paymentIntent.id);
 
         const booking = await Booking.findOne({
           "payment.stripePaymentIntentId": paymentIntent.id,
@@ -261,8 +216,6 @@ const stripeWebhook = async (req, res) => {
           break;
         }
 
-        console.log("Charge refunded:", paymentIntentId);
-
         const booking = await Booking.findOne({
           "payment.stripePaymentIntentId": paymentIntentId,
         });
@@ -280,17 +233,10 @@ const stripeWebhook = async (req, res) => {
 
         await booking.save();
 
-        console.log(
-          "Booking payment marked as refunded:",
-          booking._id.toString(),
-        );
-
         break;
       }
 
       default:
-        console.log("Unhandled Stripe event:", event.type);
-
         break;
     }
 

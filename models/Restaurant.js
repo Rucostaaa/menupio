@@ -1,4 +1,13 @@
 const mongoose = require("mongoose");
+const languages = [
+  { title: "pt", language: "Português" },
+  { title: "en", language: "English" },
+  { title: "es", language: "Español" },
+  { title: "fr", language: "Français" },
+  { title: "de", language: "Deutsch" },
+  { title: "it", language: "Italiano" },
+  { title: "nl", language: "Nederlands" },
+];
 
 const restaurantSchema = new mongoose.Schema(
   {
@@ -7,9 +16,22 @@ const restaurantSchema = new mongoose.Schema(
       ref: "User",
     },
     activity: [{ pt: String, en: String }],
+    mlActivity: [
+      {
+        type: [String],
+        enum: languages.map((item) => item.title),
+        default: ["pt", "en"],
+      },
+    ],
     name: String,
-
     description: String,
+    mlDescription: [
+      {
+        type: [String],
+        enum: languages.map((item) => item.title),
+        default: ["pt", "en"],
+      },
+    ],
     email: String,
     address: String,
     location: String,
@@ -58,6 +80,11 @@ const restaurantSchema = new mongoose.Schema(
       },
     },
     coverImage: String,
+    language: {
+      type: [String],
+      enum: languages.map((item) => item.title),
+      default: ["pt", "en"],
+    },
     footerMessage: String,
     mainImage: String,
     since: Number,
@@ -73,7 +100,7 @@ const restaurantSchema = new mongoose.Schema(
     fidelization: {
       menuItem: {
         type: mongoose.Schema.Types.ObjectId,
-        ref: "MenuItem",
+        ref: "SiteItem",
         default: null,
       },
       maxStamps: {
@@ -89,4 +116,5 @@ const restaurantSchema = new mongoose.Schema(
   },
 );
 
-module.exports = mongoose.model("Restaurant", restaurantSchema);
+module.exports =
+  mongoose.models.Restaurant || mongoose.model("Restaurant", restaurantSchema);

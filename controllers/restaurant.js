@@ -3,8 +3,16 @@ const User = require("../models/User");
 const Menu = require("../models/Menu");
 const cloudinary = require("../utils/Claudinary");
 const catchAsync = require("../utils/catchAsync");
-
-// ============================================================
+const { log } = require("node:console");
+const languages = [
+  { title: "pt", language: "Português" },
+  { title: "en", language: "English" },
+  { title: "es", language: "Español" },
+  { title: "fr", language: "Français" },
+  { title: "de", language: "Deutsch" },
+  { title: "it", language: "Italiano" },
+  { title: "nl", language: "Nederlands" },
+]; // ============================================================
 // CLOUDINARY HELPERS
 // ============================================================
 
@@ -81,6 +89,10 @@ const restaurantPopulation = [
 // ============================================================
 
 exports.createRestaurant = catchAsync(async (req, res) => {
+  if (req?.body?.fidelization?.menuItem === "") {
+    req.body.fidelization.menuItem = null;
+  }
+
   const restaurant = await Restaurant.create({
     ...req.body,
     owner: req.user._id,
@@ -99,7 +111,16 @@ exports.createRestaurant = catchAsync(async (req, res) => {
 // ============================================================
 // GET RESTAURANTS
 // ============================================================
+exports.getAllRestaurants = catchAsync(async (req, res) => {
+  const restaurants = await Restaurant.find({})
+    .populate(restaurantPopulation[0])
+    .populate(restaurantPopulation[1]);
 
+  return res.status(200).json({
+    success: true,
+    restaurants,
+  });
+});
 exports.getRestaurants = catchAsync(async (req, res) => {
   const restaurants = await Restaurant.find({
     owner: req.user._id,
@@ -726,3 +747,75 @@ exports.updateMainImage = catchAsync(async (req, res) => {
     });
   }
 });
+
+exports.updateRestaurantLanguage = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { language } = req.body;
+
+    if (!Array.isArray(language)) {
+      return res.status(400).json({
+        success: false,
+        message: "language must be an array.",
+      });
+    }
+
+    const availableLanguages = languages.map((item) => item.title);
+
+    const invalidLanguages = language.filter(
+      (item) => !availableLanguages.includes(item),
+    );
+
+    if (invalidLanguages.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: "One or more languages are invalid.",
+        invalidLanguages,
+      });
+    }
+
+    const uniqueLanguages = [...new Set(language)];
+
+    const restaurant = await Restaurant.findById(id);
+
+    if (!restaurant) {
+      return res.status(404).json({
+        success: false,
+        message: "Restaurant not found.",
+      });
+    }
+
+    const userId = String(req.user?._id);
+
+    const isOwner = String(restaurant.owner) === userId;
+
+    const isEmployer = restaurant.employers?.some(
+      (employer) => String(employer) === userId,
+    );
+
+    if (!isOwner && !isEmployer) {
+      return res.status(403).json({
+        success: false,
+        message: "You are not authorized to update this restaurant.",
+      });
+    }
+
+    restaurant.language = uniqueLanguages;
+
+    await restaurant.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Restaurant languages updated successfully.",
+      restaurant,
+      language: restaurant.language,
+    });
+  } catch (error) {
+    console.error("Update restaurant language error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to update restaurant languages.",
+    });
+  }
+};

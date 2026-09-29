@@ -12,9 +12,13 @@ const {
   updateLogo,
   updateMainImage,
   getEmployerRestaurant,
+  updateRestaurantLanguage,
+  getAllRestaurants,
 } = require("../controllers/restaurant");
 
 router.route("/").get(auth, getRestaurants).post(auth, createRestaurant);
+router.route("/all").get(auth, getAllRestaurants);
+
 router.route("/employer/:id").post(auth, getEmployerRestaurant);
 
 router
@@ -22,6 +26,8 @@ router
   .get(getRestaurant)
   .put(auth, updateRestaurant)
   .delete(auth, deleteRestaurant);
+
+router.patch("/:id/language", auth, updateRestaurantLanguage);
 
 router.put("/:id/logo", auth, upload.single("logo"), updateLogo);
 

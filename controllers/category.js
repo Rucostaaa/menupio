@@ -5,7 +5,6 @@ const MainCategory = require("../models/MainCategory");
 exports.createCategory = catchAsync(async (req, res) => {
   const { name, featured } = req.body;
   const user = req.user._id;
-  console.log(user);
 
   if (!name) {
     return res.status(400).json({
@@ -17,7 +16,6 @@ exports.createCategory = catchAsync(async (req, res) => {
   const lastCategory = await Category.findOne({
     user,
   }).sort({ ownID: -1 });
-  console.log(lastCategory);
   const ownID = lastCategory ? lastCategory.ownID + 1 : 1;
 
   const category = await Category.create({
@@ -30,6 +28,21 @@ exports.createCategory = catchAsync(async (req, res) => {
   res.status(201).json(category);
 });
 
+exports.getAllCategories = catchAsync(async (req, res) => {
+  const user = req.params.id;
+
+  const filter = {};
+
+  if (user) {
+    filter.user = user;
+  }
+
+  const categories = await Category.find(filter).sort({
+    ownID: 1,
+  });
+
+  res.status(200).json(categories);
+});
 exports.getCategories = catchAsync(async (req, res) => {
   const user = req.user._id;
 
@@ -45,7 +58,6 @@ exports.getCategories = catchAsync(async (req, res) => {
 
   res.status(200).json(categories);
 });
-
 exports.updateCategory = catchAsync(async (req, res) => {
   const category = await Category.findById(req.params.id);
 
@@ -467,4 +479,25 @@ exports.getMainCategories = catchAsync(async (req, res) => {
     .populate("categories");
 
   res.status(200).json(mainCategories);
+});
+exports.getBusinessMainCategoryJson = catchAsync(async (req, res) => {
+  const languages = ["pt", "en", "es", "fr", "de", "it", "nl"];
+
+  const mainCategories = await MainCategory.find()
+    .select("name -_id")
+    .sort({ createdAt: 1 })
+    .lean();
+
+  const result = mainCategories.map((mainCategory) => {
+    const name = mainCategory.name || {};
+
+    return {
+      name: languages.reduce((translations, language) => {
+        translations[language] = name[language] || "";
+        return translations;
+      }, {}),
+    };
+  });
+
+  res.status(200).json(result);
 });

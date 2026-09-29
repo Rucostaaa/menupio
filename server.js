@@ -93,7 +93,7 @@ app.get("/health", (req, res) => {
 | ROUTES
 |--------------------------------------------------------------------------
 */
-
+app.use("/api/health", require("./routes/health"));
 app.use("/api/auth", require("./routes/auth"));
 
 app.use("/api/users", require("./routes/user"));
@@ -106,12 +106,16 @@ app.use("/api/products", require("./routes/menuItem"));
 
 app.use("/api/menu", require("./routes/menu"));
 app.use("/api/admin", require("./routes/admin"));
-app.use("/api/session", require("./routes/session"));
+app.use("/api/sessions", require("./routes/session"));
 app.use("/api/bookings", require("./routes/booking"));
+app.use("/api/image", require("./routes/image"));
 app.use("/api/stripe", require("./routes/stripe"));
 app.use("/api/payments", require("./routes/payments"));
 app.use("/api/review", require("./routes/review"));
 app.use("/api/loyalty", require("./routes/loyalty"));
+app.use("/api/site-items", require("./routes/siteItem"));
+app.use("/api/site-categories", require("./routes/siteCategory"));
+app.use("/api/site-main-categories", require("./routes/siteMainCategory"));
 
 /*
 |--------------------------------------------------------------------------

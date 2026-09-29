@@ -12,6 +12,7 @@ const {
   updateImage,
   createProductsBulk,
   getOwnerMenuItem,
+  getAllMenuItems,
 } = require("../controllers/menuItem");
 
 router
@@ -19,6 +20,7 @@ router
   .get(auth, getMenuItems)
   .post(auth, createMenuItem)
   .put(auth, createProductsBulk);
+router.route("/all/:id").get(auth, getAllMenuItems);
 router.route("/owner/:ownerId").get(getOwnerMenuItem);
 
 router

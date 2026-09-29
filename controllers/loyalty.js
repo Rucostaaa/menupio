@@ -22,7 +22,7 @@ const getRestaurant = async (restaurantId) => {
     throw error;
   }
 
-  if (!restaurant.hasFidelization || !restaurant.fidelization?.menuItem) {
+  if (!restaurant.hasFidelization) {
     const error = new Error(
       "Loyalty cards are not enabled for this restaurant.",
     );

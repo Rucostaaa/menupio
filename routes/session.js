@@ -1,31 +1,27 @@
-const router = require("express").Router();
+const express = require("express");
 
 const {
-  getAllSessions,
-  createSession,
-  deleteManySessions,
-  advertClicked,
-  createOrder,
-  getSingleSession,
-  updateSession,
-  deleteSession,
-  getAdverts,
+  heartbeat,
+  getActiveSessions,
+  endSession,
+  identifySession,
+  trackProductClick,
+  getSessionsByScreen,
 } = require("../controllers/session");
+
 const auth = require("../middleware/auth");
 
-router
-  .route("/")
-  .get(auth, getAllSessions)
-  .post(createSession)
-  .delete(auth, deleteManySessions);
-router.get("/adverts", getAdverts);
+const router = express.Router();
 
-router.patch("/click-advert/:advertId", auth, advertClicked);
-router.patch("/purchase/:advertId", auth, createOrder);
-router
-  .route("/:sessionId")
-  .get(auth, getSingleSession)
-  .patch(auth, updateSession)
-  .delete(deleteSession);
+router.post("/heartbeat", heartbeat);
+
+router.post("/product-click", trackProductClick);
+
+router.post("/identify", auth, identifySession);
+
+router.get("/by-screen/:screenId", auth, getSessionsByScreen);
+router.get("/active", auth, getActiveSessions);
+
+router.post("/end", endSession);
 
 module.exports = router;

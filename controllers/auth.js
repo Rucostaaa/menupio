@@ -42,14 +42,6 @@ exports.register = catchAsync(async (req, res) => {
 | LOGIN
 |--------------------------------------------------------------------------
 */ exports.login = catchAsync(async (req, res) => {
-  console.log("=== LOGIN ===");
-  console.log("Origin:", req.headers.origin);
-  console.log("User-Agent:", req.headers["user-agent"]);
-  console.log("Body:", {
-    email: req.body?.email,
-    hasPassword: !!req.body?.password,
-  });
-
   const { email, password } = req.body;
 
   if (!email || !password) {
