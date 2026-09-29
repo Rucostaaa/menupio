@@ -1,6 +1,6 @@
-const SiteCategory = require("../models/siteCategory");
-const Restaurant = require("../models/restaurant");
-const SiteItem = require("../models/siteItem");
+const SiteCategory = require("../models/SiteCategory");
+const Restaurant = require("../models/Restaurant");
+const SiteItem = require("../models/SiteItem");
 
 const catchAsync = require("../utils/catchAsync");
 const cloudinary = require("../utils/Claudinary");
