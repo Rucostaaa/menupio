@@ -103,7 +103,17 @@ app.use("/api/restaurants", require("./routes/restaurant"));
 app.use("/api/categories", require("./routes/category"));
 
 app.use("/api/products", require("./routes/menuItem"));
+app.use((req, res, next) => {
+  console.log("");
+  console.log("🌐 INCOMING REQUEST");
+  console.log("METHOD:", req.method);
+  console.log("URL:", req.originalUrl);
+  console.log("PATH:", req.path);
+  console.log("QUERY:", req.query);
+  console.log("");
 
+  next();
+});
 app.use("/api/menu", require("./routes/menu"));
 app.use("/api/admin", require("./routes/admin"));
 app.use("/api/sessions", require("./routes/session"));

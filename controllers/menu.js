@@ -976,6 +976,18 @@ const getMenu = async (req, res) => {
   }
 };
 const getInitialData = async (req, res) => {
+  console.log("");
+  console.log("==============================================");
+  console.log("🔥 MENU INITIAL-DATA ROUTE HIT");
+  console.log("==============================================");
+  console.log("METHOD:", req.method);
+  console.log("ORIGINAL URL:", req.originalUrl);
+  console.log("BASE URL:", req.baseUrl);
+  console.log("PATH:", req.path);
+  console.log("PARAMS:", req.params);
+  console.log("QUERY:", req.query);
+  console.log("==============================================");
+  console.log("");
   try {
     const { id } = req.params;
 
@@ -994,30 +1006,29 @@ const getInitialData = async (req, res) => {
     );
 
     // =========================================================
-    // VALIDATE MENU ID
+    // VALIDATE SLUG
     // =========================================================
 
-    if (!id) {
+    if (!id || typeof id !== "string" || !id.trim()) {
       return res.status(400).json({
         success: false,
-        message: "Menu ID is required",
+        message: "Menu slug is required",
       });
     }
 
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid menu ID",
-      });
-    }
+    const slug = id.trim();
+
+    console.log("LOOKING UP MENU BY SLUG:", slug);
 
     // =========================================================
-    // GET MENU
+    // GET MENU BY SLUG
     // =========================================================
 
-    const menu = await Menu.findById(id)
+    const menu = await Menu.findOne({
+      slug,
+    })
       .select(
-        "name items categories mainCategory restaurant hasAdverts categorySystem",
+        "name slug items categories mainCategory restaurant hasAdverts categorySystem",
       )
 
       // =======================================================
@@ -1107,11 +1118,21 @@ const getInitialData = async (req, res) => {
     // =========================================================
 
     if (!menu) {
+      console.log("MENU NOT FOUND BY SLUG:", slug);
+
       return res.status(404).json({
         success: false,
         message: "Menu not found",
+        slug,
       });
     }
+
+    console.log("MENU FOUND:", {
+      id: String(menu._id),
+      slug: menu.slug,
+      name: menu.name,
+      categorySystem: menu.categorySystem,
+    });
 
     // =========================================================
     // NORMALIZE IDS
@@ -1249,11 +1270,15 @@ const getInitialData = async (req, res) => {
       "MENU ITEMS:",
       menuItems.map((item) => ({
         id: String(item._id),
+
         name: item?.name?.pt || item?.name?.en || "",
+
         category: normalizeId(item.category),
+
         placements: Array.isArray(item.placements)
           ? item.placements.map((placement) => ({
               restaurant: normalizeId(placement?.restaurant),
+
               category: normalizeId(placement?.category),
             }))
           : [],
@@ -1336,7 +1361,6 @@ const getInitialData = async (req, res) => {
       // SiteItem:
       //
       // category: SiteCategory
-      //
       // =====================================================
 
       if (isSingleCategorySystem) {
@@ -1348,8 +1372,11 @@ const getInitialData = async (req, res) => {
 
         console.log("SINGLE CATEGORY CHECK:", {
           itemId: String(item._id),
+
           itemCategoryId,
+
           requestedCategories: [...categorySet],
+
           matchesDirectCategory,
         });
 
@@ -1362,7 +1389,6 @@ const getInitialData = async (req, res) => {
       // SiteItem:
       //
       // placements[].category
-      //
       // =====================================================
 
       const placements = Array.isArray(item.placements) ? item.placements : [];
@@ -1393,11 +1419,15 @@ const getInitialData = async (req, res) => {
 
       console.log("NORMAL CATEGORY CHECK:", {
         itemId: String(item._id),
+
         restaurantId,
+
         placements: placements.map((placement) => ({
           restaurant: normalizeId(placement?.restaurant),
+
           category: normalizeId(placement?.category),
         })),
+
         matchesPlacement,
       });
 
@@ -1439,7 +1469,9 @@ const getInitialData = async (req, res) => {
 
     console.log("================ RESULT DEBUG ================");
 
-    console.log("Menu:", String(menu._id));
+    console.log("Menu ID:", String(menu._id));
+
+    console.log("Menu slug:", menu.slug);
 
     console.log("Category system:", categorySystem);
 
@@ -1472,7 +1504,9 @@ const getInitialData = async (req, res) => {
           page,
           limit,
           total: totalItems,
+
           hasMore: page * limit < totalItems,
+
           totalPages: Math.ceil(totalItems / limit),
         },
       },
