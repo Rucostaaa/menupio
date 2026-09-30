@@ -138,7 +138,7 @@ exports.stampLoyaltyCard = async (req, res) => {
       });
     }
 
-    if (!restaurant.hasFidelization || !restaurant.fidelization?.menuItem) {
+    if (!restaurant.hasFidelization || !restaurant.fidelization[0]?.menuItem) {
       return res.status(400).json({
         success: false,
         message: "Loyalty cards are not enabled for this restaurant.",
@@ -154,8 +154,8 @@ exports.stampLoyaltyCard = async (req, res) => {
     if (!card) {
       card = user.loyaltyCards.create({
         restaurant: restaurant._id,
-        menuItem: restaurant.fidelization.menuItem._id,
-        maxStamps: restaurant.fidelization.maxStamps,
+        menuItem: restaurant.fidelization[0].menuItem._id,
+        maxStamps: restaurant.fidelization[0].maxStamps,
         stamps: 0,
         history: [],
       });
