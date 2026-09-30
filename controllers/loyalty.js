@@ -42,8 +42,6 @@ const getCardPayload = (user, restaurant) => {
     userId: String(user._id),
     restaurantId: String(restaurant._id),
     restaurantName: restaurant.name,
-    menuItem: restaurant.fidelization.menuItem,
-    maxStamps: card?.maxStamps || restaurant.fidelization.maxStamps,
     stamps: card?.stamps || 0,
     history: card?.history || [],
   };
@@ -148,12 +146,6 @@ exports.stampLoyaltyCard = async (req, res) => {
     }
 
     const user = await User.findById(userId);
-
-    if (!user || user.role !== "user") {
-      return res
-        .status(404)
-        .json({ success: false, message: "Customer not found." });
-    }
 
     let card = user.loyaltyCards.find(
       (item) => String(item.restaurant) === String(restaurant._id),

@@ -945,7 +945,6 @@ const getMenu = async (req, res) => {
         },
       })
       .populate("restaurant");
-    console.log(menu);
     // =====================================================
     // NOT FOUND
     // =====================================================
@@ -976,27 +975,8 @@ const getMenu = async (req, res) => {
   }
 };
 const getInitialData = async (req, res) => {
-  console.log("");
-  console.log("==============================================");
-  console.log("🔥 MENU INITIAL-DATA ROUTE HIT");
-  console.log("==============================================");
-  console.log("METHOD:", req.method);
-  console.log("ORIGINAL URL:", req.originalUrl);
-  console.log("BASE URL:", req.baseUrl);
-  console.log("PATH:", req.path);
-  console.log("PARAMS:", req.params);
-  console.log("QUERY:", req.query);
-  console.log("==============================================");
-  console.log("");
   try {
     const { id } = req.params;
-
-    console.log("req.params:", req.params);
-    console.log("req.query:", req.query);
-
-    // =========================================================
-    // PAGINATION
-    // =========================================================
 
     const page = Math.max(Number.parseInt(req.query.page, 10) || 1, 1);
 
@@ -1018,8 +998,6 @@ const getInitialData = async (req, res) => {
 
     const slug = id.trim();
 
-    console.log("LOOKING UP MENU BY SLUG:", slug);
-
     // =========================================================
     // GET MENU BY SLUG
     // =========================================================
@@ -1038,6 +1016,10 @@ const getInitialData = async (req, res) => {
       .populate({
         path: "restaurant",
         model: "Restaurant",
+        populate: {
+          path: "fidelization.menuItem",
+          model: "SiteItem",
+        },
       })
 
       // =======================================================
@@ -1118,21 +1100,12 @@ const getInitialData = async (req, res) => {
     // =========================================================
 
     if (!menu) {
-      console.log("MENU NOT FOUND BY SLUG:", slug);
-
       return res.status(404).json({
         success: false,
         message: "Menu not found",
         slug,
       });
     }
-
-    console.log("MENU FOUND:", {
-      id: String(menu._id),
-      slug: menu.slug,
-      name: menu.name,
-      categorySystem: menu.categorySystem,
-    });
 
     // =========================================================
     // NORMALIZE IDS
@@ -1167,10 +1140,6 @@ const getInitialData = async (req, res) => {
     const categorySystem = menu.categorySystem || null;
 
     const isSingleCategorySystem = categorySystem === "single";
-
-    console.log("MENU CATEGORY SYSTEM:", categorySystem);
-
-    console.log("IS SINGLE CATEGORY SYSTEM:", isSingleCategorySystem);
 
     // =========================================================
     // CATEGORY QUERY
@@ -1234,8 +1203,6 @@ const getInitialData = async (req, res) => {
         : [req.query.categoryId];
     }
 
-    console.log("requestedCategories:", requestedCategories);
-
     // =========================================================
     // NORMALIZE / VALIDATE CATEGORY IDS
     // =========================================================
@@ -1248,14 +1215,6 @@ const getInitialData = async (req, res) => {
 
     const categorySet = new Set(validCategoryIds);
 
-    console.log("validCategoryIds:", validCategoryIds);
-
-    console.log("categorySet:", [...categorySet]);
-
-    // =========================================================
-    // MENU ITEMS
-    // =========================================================
-
     const menuItems = (menu.items || [])
       .filter(
         (menuItem) =>
@@ -1264,44 +1223,15 @@ const getInitialData = async (req, res) => {
       .map((menuItem) => menuItem.item)
       .filter((item) => item && item._id);
 
-    console.log("MENU ITEMS COUNT:", menuItems.length);
-
-    console.log(
-      "MENU ITEMS:",
-      menuItems.map((item) => ({
-        id: String(item._id),
-
-        name: item?.name?.pt || item?.name?.en || "",
-
-        category: normalizeId(item.category),
-
-        placements: Array.isArray(item.placements)
-          ? item.placements.map((placement) => ({
-              restaurant: normalizeId(placement?.restaurant),
-
-              category: normalizeId(placement?.category),
-            }))
-          : [],
-      })),
-    );
-
-    // =========================================================
-    // SEARCH
-    // =========================================================
-
     const search = String(req.query.search || "")
       .trim()
       .toLowerCase();
-
-    console.log("SEARCH:", search || "(none)");
 
     // =========================================================
     // FILTER ITEMS
     // =========================================================
 
     let filteredItems = menuItems.filter((item) => {
-      console.log("CHECKING ITEM:", String(item._id));
-
       // =====================================================
       // SEARCH
       // =====================================================
@@ -1327,8 +1257,6 @@ const getInitialData = async (req, res) => {
           value.includes(search),
         );
 
-        console.log("matchesSearch:", matchesSearch);
-
         if (!matchesSearch) {
           return false;
         }
@@ -1339,8 +1267,6 @@ const getInitialData = async (req, res) => {
       // =====================================================
 
       if (!categoryFilterWasRequested) {
-        console.log("NO CATEGORY FILTER -> KEEP ITEM");
-
         return true;
       }
 
@@ -1350,8 +1276,6 @@ const getInitialData = async (req, res) => {
       // =====================================================
 
       if (categorySet.size === 0) {
-        console.log("CATEGORY FILTER REQUESTED BUT NO VALID IDS");
-
         return false;
       }
 
@@ -1369,16 +1293,6 @@ const getInitialData = async (req, res) => {
         const matchesDirectCategory = Boolean(
           itemCategoryId && categorySet.has(itemCategoryId),
         );
-
-        console.log("SINGLE CATEGORY CHECK:", {
-          itemId: String(item._id),
-
-          itemCategoryId,
-
-          requestedCategories: [...categorySet],
-
-          matchesDirectCategory,
-        });
 
         return matchesDirectCategory;
       }
@@ -1417,20 +1331,6 @@ const getInitialData = async (req, res) => {
         return categorySet.has(placementCategory);
       });
 
-      console.log("NORMAL CATEGORY CHECK:", {
-        itemId: String(item._id),
-
-        restaurantId,
-
-        placements: placements.map((placement) => ({
-          restaurant: normalizeId(placement?.restaurant),
-
-          category: normalizeId(placement?.category),
-        })),
-
-        matchesPlacement,
-      });
-
       return matchesPlacement;
     });
 
@@ -1462,31 +1362,6 @@ const getInitialData = async (req, res) => {
     const end = start + limit;
 
     const items = filteredItems.slice(start, end);
-
-    // =========================================================
-    // RESULT DEBUG
-    // =========================================================
-
-    console.log("================ RESULT DEBUG ================");
-
-    console.log("Menu ID:", String(menu._id));
-
-    console.log("Menu slug:", menu.slug);
-
-    console.log("Category system:", categorySystem);
-
-    console.log("Total menu items:", menuItems.length);
-
-    console.log("Total matching items:", totalItems);
-
-    console.log("Returning items:", items.length);
-
-    console.log(
-      "Returned item names:",
-      items.map((item) => item?.name?.pt || item?.name?.en || String(item._id)),
-    );
-
-    console.log("==============================================");
 
     // =========================================================
     // RESPONSE

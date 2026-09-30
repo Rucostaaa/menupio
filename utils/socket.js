@@ -32,6 +32,8 @@ const initializeSocket = (httpServer) => {
       }
 
       socket.user = user;
+      console.log(socket);
+
       next();
     } catch (error) {
       next(new Error("Invalid socket authentication"));
@@ -40,6 +42,8 @@ const initializeSocket = (httpServer) => {
 
   io.on("connection", (socket) => {
     socket.join(`user:${socket.user._id}`);
+    console.log(`user:${socket.user._id} connected`);
+
     socket.emit("loyalty:connected", { userId: String(socket.user._id) });
   });
 

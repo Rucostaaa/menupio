@@ -97,19 +97,21 @@ const restaurantSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
-    fidelization: {
-      menuItem: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "SiteItem",
-        default: null,
+    fidelization: [
+      {
+        menuItem: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "SiteItem",
+          default: null,
+        },
+        maxStamps: {
+          type: Number,
+          default: 10,
+          min: 1,
+          max: 100,
+        },
       },
-      maxStamps: {
-        type: Number,
-        default: 10,
-        min: 1,
-        max: 100,
-      },
-    },
+    ],
   },
   {
     timestamps: true,
