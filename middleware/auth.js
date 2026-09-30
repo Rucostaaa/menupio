@@ -15,7 +15,15 @@ module.exports = async (req, res, next) => {
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-    req.user = await User.findById(decoded.id);
+    req.user = await User.findById(decoded.id)
+      .populate({
+        path: "loyaltyCards.restaurant",
+        select: "name logo hasFidelization fidelization",
+      })
+      .populate({
+        path: "loyaltyCards.menuItem",
+        select: "name images",
+      });
 
     next();
   } catch {

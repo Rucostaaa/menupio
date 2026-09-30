@@ -80,7 +80,6 @@ exports.getRestaurantLoyaltyUsers = async (req, res) => {
     }
 
     const users = await User.find({
-      role: "user",
       "loyaltyCards.restaurant": restaurant._id,
     }).select("_id name email loyaltyCards");
 
@@ -107,19 +106,64 @@ exports.getRestaurantLoyaltyUsers = async (req, res) => {
     });
   }
 };
+exports.getLoyaltyCards = async (req, res) => {
+  try {
+    const userId = req.user?._id || req.user?.id;
 
+    if (!userId) {
+      return res.status(401).json({
+        message: "Utilizador não autenticado.",
+      });
+    }
+
+    const user = await User.findById(userId)
+      .populate({
+        path: "loyaltyCards.restaurant",
+        select: "name logo hasFidelization fidelization",
+      })
+      .populate({
+        path: "loyaltyCards.menuItem",
+        select: "name images",
+      });
+
+    if (!user) {
+      return res.status(404).json({
+        message: "Utilizador não encontrado.",
+      });
+    }
+
+    return res.status(200).json({
+      cards: user.loyaltyCards || [],
+    });
+  } catch (error) {
+    console.error("GET USER LOYALTY CARDS ERROR:", error);
+
+    return res.status(500).json({
+      message: "Não foi possível carregar os cartões de lealdade.",
+    });
+  }
+};
 exports.stampLoyaltyCard = async (req, res) => {
   try {
     const { userId, stamps = 1 } = req.body || {};
     const amount = Number(stamps);
 
+    console.log(
+      `[LOYALTY] Stamp request received | restaurant=${req.params.restaurantId} | user=${userId} | stamps=${amount}`,
+    );
+
     if (!mongoose.Types.ObjectId.isValid(userId)) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Invalid user ID." });
+      console.log(`[LOYALTY] Invalid user ID: ${userId}`);
+
+      return res.status(400).json({
+        success: false,
+        message: "Invalid user ID.",
+      });
     }
 
     if (!Number.isInteger(amount) || amount < 1 || amount > 10) {
+      console.log(`[LOYALTY] Invalid stamp amount: ${amount}`);
+
       return res.status(400).json({
         success: false,
         message: "Stamps must be an integer between 1 and 10.",
@@ -129,9 +173,13 @@ exports.stampLoyaltyCard = async (req, res) => {
     const restaurant = await Restaurant.findOne({
       _id: req.params.restaurantId,
       owner: req.user._id,
-    }).populate("fidelization.menuItem", "name price image");
+    }).populate("fidelization.menuItem", "name price images");
 
     if (!restaurant) {
+      console.log(
+        `[LOYALTY] Restaurant not found or not owned | restaurant=${req.params.restaurantId}`,
+      );
+
       return res.status(404).json({
         success: false,
         message: "Restaurant not found or not owned by you.",
@@ -139,6 +187,10 @@ exports.stampLoyaltyCard = async (req, res) => {
     }
 
     if (!restaurant.hasFidelization || !restaurant.fidelization[0]?.menuItem) {
+      console.log(
+        `[LOYALTY] Loyalty not enabled | restaurant=${restaurant._id}`,
+      );
+
       return res.status(400).json({
         success: false,
         message: "Loyalty cards are not enabled for this restaurant.",
@@ -147,9 +199,20 @@ exports.stampLoyaltyCard = async (req, res) => {
 
     const user = await User.findById(userId);
 
+    if (!user) {
+      console.log(`[LOYALTY] User not found | user=${userId}`);
+
+      return res.status(404).json({
+        success: false,
+        message: "User not found.",
+      });
+    }
+
     let card = user.loyaltyCards.find(
       (item) => String(item.restaurant) === String(restaurant._id),
     );
+
+    const cardWasCreated = !card;
 
     if (!card) {
       card = user.loyaltyCards.create({
@@ -159,16 +222,46 @@ exports.stampLoyaltyCard = async (req, res) => {
         stamps: 0,
         history: [],
       });
+
       user.loyaltyCards.push(card);
+
       card = user.loyaltyCards[user.loyaltyCards.length - 1];
     }
 
-    card.stamps = Math.min(card.stamps + amount, card.maxStamps);
-    card.history.push({ stamps: amount, action: "added" });
+    const previousStamps = Number(card.stamps) || 0;
+
+    card.stamps = Math.min(previousStamps + amount, card.maxStamps);
+
+    card.history.push({
+      stamps: amount,
+      action: "added",
+    });
+
     await user.save();
 
+    console.log(
+      `[LOYALTY] Card saved | user=${userId} | card=${card._id} | previous=${previousStamps} | added=${amount} | new=${card.stamps} | max=${card.maxStamps} | created=${cardWasCreated}`,
+    );
+
     const payload = getCardPayload(user, restaurant);
-    getSocket()?.to(`user:${userId}`).emit("loyalty:updated", payload);
+
+    console.log(
+      `[LOYALTY] Socket emit | room=user:${userId} | event=loyalty:updated`,
+    );
+
+    console.log("[LOYALTY] Socket payload:", JSON.stringify(payload, null, 2));
+
+    const socket = getSocket();
+
+    if (!socket) {
+      console.warn("[LOYALTY] Socket.IO instance is not available.");
+    } else {
+      socket.to(`user:${userId}`).emit("loyalty:updated", payload);
+
+      console.log(
+        `[LOYALTY] Socket event emitted successfully | room=user:${userId}`,
+      );
+    }
 
     return res.status(200).json({
       success: true,
@@ -176,6 +269,8 @@ exports.stampLoyaltyCard = async (req, res) => {
       card: payload,
     });
   } catch (error) {
+    console.error("[LOYALTY] stampLoyaltyCard error:", error);
+
     return res.status(error.statusCode || 500).json({
       success: false,
       message: error.message || "Failed to stamp loyalty card.",

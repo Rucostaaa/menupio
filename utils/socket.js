@@ -25,6 +25,7 @@ const initializeSocket = (httpServer) => {
       }
 
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
       const user = await User.findById(decoded.id).select("_id role");
 
       if (!user) {
@@ -32,7 +33,6 @@ const initializeSocket = (httpServer) => {
       }
 
       socket.user = user;
-      console.log(socket);
 
       next();
     } catch (error) {
@@ -41,10 +41,15 @@ const initializeSocket = (httpServer) => {
   });
 
   io.on("connection", (socket) => {
-    socket.join(`user:${socket.user._id}`);
-    console.log(`user:${socket.user._id} connected`);
+    const userId = String(socket.user._id);
 
-    socket.emit("loyalty:connected", { userId: String(socket.user._id) });
+    socket.join(`user:${userId}`);
+
+    console.log(`user:${userId} connected`);
+
+    socket.emit("loyalty:connected", {
+      userId,
+    });
   });
 
   return io;
@@ -52,4 +57,22 @@ const initializeSocket = (httpServer) => {
 
 const getSocket = () => io;
 
-module.exports = { initializeSocket, getSocket };
+const emitLoyaltyUpdate = (userId, loyaltyCard) => {
+  if (!io) {
+    console.warn("Socket.IO is not initialized.");
+
+    return;
+  }
+
+  if (!userId || !loyaltyCard?._id) {
+    return;
+  }
+
+  io.to(`user:${String(userId)}`).emit("loyalty:updated", loyaltyCard);
+};
+
+module.exports = {
+  initializeSocket,
+  getSocket,
+  emitLoyaltyUpdate,
+};

@@ -88,10 +88,21 @@ exports.getCurrentUser = catchAsync(async (req, res) => {
   // 2. Find the complete user
   // ----------------------------------------------------------
 
-  const user = await User.findById(userId).select("-password").populate({
-    path: "bookings",
-    model: "Booking",
-  });
+  const user = await User.findById(userId)
+    .select("-password")
+    .populate({
+      path: "bookings",
+      model: "Booking",
+    })
+    .populate({
+      path: "loyaltyCards.restaurant",
+      select: "name logo hasFidelization fidelization",
+    })
+    .populate({
+      path: "loyaltyCards.menuItem",
+      model: "SiteItem",
+      select: "name images image",
+    });
   const restaurants = await Restaurant.find({ owner: user._id }).populate({
     path: "employers",
     model: "User",
@@ -110,6 +121,7 @@ exports.getCurrentUser = catchAsync(async (req, res) => {
   // ----------------------------------------------------------
   // 4. Return current user
   // ----------------------------------------------------------
+  console.log(user);
 
   return res.status(200).json({
     success: true,

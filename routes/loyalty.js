@@ -4,6 +4,7 @@ const {
   getMyLoyaltyCard,
   getRestaurantLoyaltyUsers,
   stampLoyaltyCard,
+  getLoyaltyCards,
 } = require("../controllers/loyalty");
 
 const router = express.Router();
@@ -11,5 +12,6 @@ const router = express.Router();
 router.get("/:restaurantId/card", auth, getMyLoyaltyCard);
 router.get("/:restaurantId/users", auth, getRestaurantLoyaltyUsers);
 router.post("/:restaurantId/stamp", auth, stampLoyaltyCard);
+router.get("/user/loyalty-cards/", auth, getLoyaltyCards);
 
 module.exports = router;

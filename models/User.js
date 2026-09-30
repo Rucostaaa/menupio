@@ -210,7 +210,7 @@ const userSchema = new mongoose.Schema(
         "employer",
         "owner",
         "advertisor",
-        "admin",
+        "Admin",
         "viewer",
         "store",
       ],
