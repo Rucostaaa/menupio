@@ -275,6 +275,88 @@ exports.createLead = async (req, res) => {
   }
 };
 
+exports.bulkCreateLeads = async (req, res) => {
+  try {
+    const input = Array.isArray(req.body) ? req.body : req.body?.leads;
+    if (!Array.isArray(input) || input.length === 0) {
+      return sendValidationError(res, "Send a non-empty JSON array of leads.");
+    }
+    if (input.length > 500) {
+      return sendValidationError(res, "A maximum of 500 leads per import is allowed.");
+    }
+
+    const text = (value, max) =>
+      typeof value === "string" || typeof value === "number"
+        ? String(value).trim().slice(0, max)
+        : "";
+    const keyOf = (name, city) =>
+      `${name.toLowerCase()}|${(city || "").toLowerCase()}`;
+
+    const docs = [];
+    const invalid = [];
+    const seen = new Set();
+    input.forEach((row, index) => {
+      const name = text(row?.name ?? row?.restaurantName, 160);
+      if (!name) {
+        invalid.push({ index, reason: "Missing name" });
+        return;
+      }
+      const city = text(row.city, 100);
+      const key = keyOf(name, city);
+      if (seen.has(key)) {
+        invalid.push({ index, name, reason: "Duplicate in file" });
+        return;
+      }
+      seen.add(key);
+      const email = text(row.email, 254).toLowerCase();
+      docs.push({
+        restaurantName: name,
+        city,
+        phone: text(row.phone, 50),
+        notes: text(row.notes, 10000),
+        ...(email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? { email } : {}),
+        status: "NEW",
+        source: "import",
+        assignedTo: req.user._id,
+      });
+    });
+
+    const existing = await SalesLead.find({
+      restaurantName: { $in: docs.map((doc) => doc.restaurantName) },
+    })
+      .select("restaurantName city")
+      .lean();
+    const existingKeys = new Set(
+      existing.map((lead) => keyOf(lead.restaurantName, lead.city)),
+    );
+    const toInsert = docs.filter((doc) => {
+      if (existingKeys.has(keyOf(doc.restaurantName, doc.city))) {
+        invalid.push({ name: doc.restaurantName, reason: "Already exists" });
+        return false;
+      }
+      return true;
+    });
+
+    const created = toInsert.length
+      ? await SalesLead.insertMany(toInsert, { ordered: false })
+      : [];
+
+    return res.status(201).json({
+      success: true,
+      created: created.length,
+      skipped: invalid.length,
+      skippedDetails: invalid,
+    });
+  } catch (error) {
+    if (sendPersistenceValidationError(res, error)) return;
+    console.error("BULK CREATE SALES LEADS ERROR:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Could not import the leads.",
+    });
+  }
+};
+
 exports.markLeadRead = async (req, res) => {
   try {
     if (!validateLeadId(req.params.id, res)) return;

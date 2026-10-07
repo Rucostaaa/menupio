@@ -6,6 +6,7 @@ const cors = require("cors");
 const helmet = require("helmet");
 const compression = require("compression");
 const morgan = require("morgan");
+const { rateLimit } = require("express-rate-limit");
 const path = require("path");
 const http = require("http");
 const { initializeSocket } = require("./utils/socket");
@@ -60,6 +61,27 @@ app.use(compression());
 app.use(morgan("dev"));
 
 app.use("/api/payments", require("./routes/payments"));
+
+// Behind a reverse proxy set TRUST_PROXY (e.g. 1) so the real client IP is used.
+if (process.env.TRUST_PROXY) {
+  const hops = Number(process.env.TRUST_PROXY);
+  app.set("trust proxy", Number.isNaN(hops) ? process.env.TRUST_PROXY : hops);
+}
+
+app.use(
+  "/api",
+  rateLimit({
+    windowMs: 60 * 1000,
+    limit: 60,
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+    skip: (req) => req.method === "OPTIONS",
+    message: {
+      success: false,
+      message: "Demasiados pedidos. Tente novamente dentro de um minuto.",
+    },
+  }),
+);
 
 app.use(express.json({ limit: "20mb" }));
 

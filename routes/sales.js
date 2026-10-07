@@ -7,6 +7,7 @@ const {
   createAdvertiserInquiry,
   getLeads,
   createLead,
+  bulkCreateLeads,
   getLead,
   markLeadRead,
   deleteLead,
@@ -22,6 +23,7 @@ router.use(auth, allowedRoles(["Admin"]));
 router.get("/dashboard", getDashboard);
 router.get("/leads/unread-count", getUnreadLeadCount);
 router.route("/leads").get(getLeads).post(createLead);
+router.post("/leads/bulk", bulkCreateLeads);
 router.get("/leads/:id", getLead);
 router.patch("/leads/:id/read", markLeadRead);
 router.delete("/leads/:id", deleteLead);
