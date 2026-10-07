@@ -4,6 +4,7 @@ const SiteItem = require("../models/SiteItem");
 const Restaurant = require("../models/Restaurant");
 const Category = require("../models/Category");
 const SiteCategory = require("../models/SiteCategory");
+const Menu = require("../models/Menu");
 const cloudinary = require("../utils/Claudinary");
 
 // ============================================================
@@ -23,6 +24,30 @@ const requireAdmin = (req, res) => {
   return true;
 };
 
+const validateRecommendationIds = async (value, itemId = null) => {
+  if (!Array.isArray(value)) {
+    return { error: "As recomendações devem ser uma lista de SiteItems." };
+  }
+
+  const ids = [...new Set(value.map((id) => String(id)))];
+  if (ids.some((id) => !mongoose.Types.ObjectId.isValid(id))) {
+    return { error: "A lista contém um ID de recomendação inválido." };
+  }
+  if (itemId && ids.includes(String(itemId))) {
+    return { error: "Um SiteItem não pode recomendar-se a si próprio." };
+  }
+  if (ids.length > 0) {
+    const existingCount = await SiteItem.countDocuments({
+      _id: { $in: ids },
+    });
+    if (existingCount !== ids.length) {
+      return { error: "Uma ou mais recomendações não foram encontradas." };
+    }
+  }
+
+  return { ids };
+};
+
 // ============================================================
 // POPULATION
 // ============================================================
@@ -38,6 +63,220 @@ const siteItemPopulation = [
     select: "_id name",
   },
 ];
+
+const DEFAULT_PLACEMENT_IMAGE_SETTINGS = {
+  h: "105%",
+  w: "105%",
+  translateX: "14%",
+  translateY: "2%",
+};
+
+const toPlainValue = (value, fallback) => {
+  if (value && typeof value.toObject === "function") {
+    return value.toObject();
+  }
+
+  return value ?? fallback;
+};
+
+const hasPlacementValue = (value) => {
+  if (value === null || value === undefined) return false;
+  if (typeof value === "string") return value.trim() !== "";
+  if (Array.isArray(value)) return value.length > 0;
+  if (value instanceof Map) return value.size > 0;
+  if (typeof value === "object") return Object.keys(value).length > 0;
+  return true;
+};
+
+const createRestaurantPlacement = (
+  siteItem,
+  restaurantId,
+  categoryId = null,
+) => {
+  const imageSettings = toPlainValue(
+    siteItem.imageSettings,
+    DEFAULT_PLACEMENT_IMAGE_SETTINGS,
+  );
+
+  return {
+    restaurant: restaurantId,
+    category: categoryId,
+    name: toPlainValue(siteItem.name, {}),
+    description: toPlainValue(siteItem.description, {}),
+    ingredients: Array.isArray(siteItem.ingredients)
+      ? [...siteItem.ingredients]
+      : [],
+    alerts: Array.isArray(siteItem.alerts) ? [...siteItem.alerts] : [],
+    models: [],
+    imageSettings: {
+      h: imageSettings.h || DEFAULT_PLACEMENT_IMAGE_SETTINGS.h,
+      w: imageSettings.w || DEFAULT_PLACEMENT_IMAGE_SETTINGS.w,
+      translateX:
+        imageSettings.translateX || DEFAULT_PLACEMENT_IMAGE_SETTINGS.translateX,
+      translateY:
+        imageSettings.translateY || DEFAULT_PLACEMENT_IMAGE_SETTINGS.translateY,
+    },
+  };
+};
+
+const completeRestaurantPlacement = (
+  placement,
+  siteItem,
+  restaurantId,
+  categoryId,
+) => {
+  const defaults = createRestaurantPlacement(
+    siteItem,
+    restaurantId,
+    categoryId,
+  );
+  const currentName = toPlainValue(placement.name, {});
+  const currentDescription = toPlainValue(placement.description, {});
+  const currentImageSettings = toPlainValue(placement.imageSettings, {});
+  const mergeLocalizedValues = (current, fallback) =>
+    Object.fromEntries(
+      [...new Set([...Object.keys(fallback), ...Object.keys(current)])].map(
+        (language) => [
+          language,
+          hasPlacementValue(current[language])
+            ? current[language]
+            : fallback[language] || "",
+        ],
+      ),
+    );
+
+  placement.category = categoryId;
+  placement.name = mergeLocalizedValues(currentName, defaults.name);
+  placement.description = mergeLocalizedValues(
+    currentDescription,
+    defaults.description,
+  );
+
+  if (!hasPlacementValue(placement.ingredients)) {
+    placement.ingredients = defaults.ingredients;
+  }
+  if (!hasPlacementValue(placement.alerts)) {
+    placement.alerts = defaults.alerts;
+  }
+
+  placement.imageSettings = Object.fromEntries(
+    Object.entries(DEFAULT_PLACEMENT_IMAGE_SETTINGS).map(([key, value]) => [
+      key,
+      hasPlacementValue(currentImageSettings[key])
+        ? currentImageSettings[key]
+        : value,
+    ]),
+  );
+};
+
+const canManageRestaurant = async (user, restaurantId) => {
+  const normalizedRestaurantId = restaurantId?._id || restaurantId;
+
+  if (!mongoose.Types.ObjectId.isValid(normalizedRestaurantId)) {
+    return false;
+  }
+
+  if (String(user?.role || "").toLowerCase() === "admin") {
+    return true;
+  }
+
+  return Boolean(
+    await Restaurant.exists({
+      _id: normalizedRestaurantId,
+      $or: [{ owner: user?._id }, { employers: user?._id }],
+    }),
+  );
+};
+
+const categoryIsPlacedAtRestaurant = async (categoryId, restaurantId) => {
+  if (!categoryId) return true;
+  if (!mongoose.Types.ObjectId.isValid(categoryId)) return false;
+
+  return Boolean(
+    await SiteCategory.exists({
+      _id: categoryId,
+      "placements.restaurant": restaurantId?._id || restaurantId,
+    }),
+  );
+};
+
+const getReferenceId = (value) => {
+  if (value === null || value === undefined) return "";
+
+  const id =
+    typeof value === "object" ? value?._id || value?.id || value : value;
+
+  return String(id || "");
+};
+
+exports.createSiteItem = async (req, res) => {
+  try {
+    const item = req.body;
+    const placements = Array.isArray(item?.placements) ? item.placements : [];
+
+    if (!item || typeof item !== "object" || placements.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "A SiteItem and at least one restaurant placement are required.",
+      });
+    }
+
+    for (const placement of placements) {
+      if (!(await canManageRestaurant(req.user, placement?.restaurant))) {
+        return res.status(403).json({
+          success: false,
+          message: "You do not have permission to manage this restaurant.",
+        });
+      }
+      if (
+        !(await categoryIsPlacedAtRestaurant(
+          placement?.category,
+          placement?.restaurant,
+        ))
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "The selected category is not assigned to this restaurant.",
+        });
+      }
+    }
+
+    if (item.category && !(await SiteCategory.exists({ _id: item.category }))) {
+      return res.status(400).json({
+        success: false,
+        message: "The selected category does not exist.",
+      });
+    }
+
+    const siteItem = await SiteItem.create({
+      name: item.name || {},
+      description: item.description || {},
+      category: item.category || null,
+      image: Array.isArray(item.image) ? item.image : [],
+      imageSettings: item.imageSettings || {},
+      ingredients: Array.isArray(item.ingredients) ? item.ingredients : [],
+      alerts: Array.isArray(item.alerts) ? item.alerts : [],
+      placements,
+    });
+
+    const populated = await SiteItem.findById(siteItem._id)
+      .populate(siteItemPopulation[0])
+      .populate(siteItemPopulation[1]);
+
+    return res.status(201).json({
+      success: true,
+      siteItem: populated,
+    });
+  } catch (error) {
+    console.error("CREATE SITE ITEM ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: error?.message || "Unable to create SiteItem.",
+    });
+  }
+};
 
 {
   /* ============================================================
@@ -131,8 +370,15 @@ exports.createSiteItemsBulk = async (req, res) => {
 exports.getOwnerSiteItems = async (req, res) => {
   const { id } = req.params;
 
-  console.log("getOwnerSiteItems id", req.params);
   try {
+    if (!(await canManageRestaurant(req.user, id))) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "You do not have permission to view this restaurant's SiteItems.",
+      });
+    }
+
     const siteItems = await SiteItem.find({
       "placements.restaurant": id,
     })
@@ -140,6 +386,8 @@ exports.getOwnerSiteItems = async (req, res) => {
         path: "category",
         model: "SiteCategory",
       })
+      .populate(siteItemPopulation[0])
+      .populate(siteItemPopulation[1])
       .sort({ createdAt: -1 });
     return res.status(200).json({
       success: true,
@@ -250,6 +498,152 @@ exports.updateSiteItem = async (req, res) => {
       });
     }
 
+    const isAdmin = String(req.user?.role || "").toLowerCase() === "admin";
+    let recommendations;
+    if (req.body.recommendations !== undefined) {
+      if (!isAdmin) {
+        return res.status(403).json({
+          success: false,
+          message: "Apenas administradores podem gerir recomendações.",
+        });
+      }
+
+      const validation = await validateRecommendationIds(
+        req.body.recommendations,
+        siteItem._id,
+      );
+      if (validation.error) {
+        return res.status(400).json({
+          success: false,
+          message: validation.error,
+        });
+      }
+      recommendations = validation.ids;
+    }
+
+    const requestedPlacements = Array.isArray(req.body.placements)
+      ? req.body.placements
+      : siteItem.placements;
+
+    console.log("========== UPDATE SITE ITEM ==========");
+    console.log("SiteItem:", String(siteItem._id));
+    console.log("User:", String(req.user?._id || req.user?.id));
+    console.log("Role:", req.user?.role);
+    console.log("Is admin:", isAdmin);
+    console.log("Requested placements:", requestedPlacements);
+
+    const managedPlacements = [];
+
+    for (const placement of requestedPlacements) {
+      const restaurantId = placement?.restaurant?._id || placement?.restaurant;
+
+      const categoryId = placement?.category?._id || placement?.category;
+
+      console.log("Checking placement:", {
+        restaurantId,
+        categoryId,
+        placementId: placement?._id,
+      });
+
+      if (!restaurantId) {
+        return res.status(400).json({
+          success: false,
+          message: "A placement is missing a restaurant.",
+          placement,
+        });
+      }
+
+      /*
+       * Admins can manage all placements.
+       */
+      if (isAdmin) {
+        managedPlacements.push(placement);
+        continue;
+      }
+
+      /*
+       * Non-admin users can only manage restaurants
+       * they are allowed to manage.
+       */
+      const canManage = await canManageRestaurant(req.user, restaurantId);
+
+      console.log("canManageRestaurant:", {
+        restaurantId,
+        canManage,
+      });
+
+      if (!canManage) {
+        continue;
+      }
+
+      const existingPlacement = siteItem.placements.find((currentPlacement) => {
+        if (
+          placement?._id &&
+          String(currentPlacement?._id) === String(placement._id)
+        ) {
+          return true;
+        }
+
+        return (
+          getReferenceId(currentPlacement?.restaurant) ===
+          getReferenceId(restaurantId)
+        );
+      });
+      const existingCategoryId = getReferenceId(existingPlacement?.category);
+      const requestedCategoryId = getReferenceId(categoryId);
+      const categoryIsUnchanged =
+        Boolean(existingPlacement) &&
+        existingCategoryId === requestedCategoryId;
+
+      console.log("Placement category comparison:", {
+        placementId: placement?._id,
+        existingCategoryId,
+        requestedCategoryId,
+        categoryIsUnchanged,
+      });
+
+      /*
+       * Validate new category assignments, but allow unchanged legacy
+       * assignments to keep being edited when the restaurant's category
+       * configuration has since changed.
+       */
+      if (categoryId && !categoryIsUnchanged) {
+        const categoryIsValid = await categoryIsPlacedAtRestaurant(
+          categoryId,
+          restaurantId,
+        );
+
+        console.log("categoryIsPlacedAtRestaurant:", {
+          categoryId,
+          restaurantId,
+          categoryIsValid,
+        });
+
+        if (!categoryIsValid) {
+          return res.status(400).json({
+            success: false,
+            message: "The selected category is not assigned to this restaurant.",
+            restaurantId,
+            categoryId,
+            placementId: placement?._id,
+          });
+        }
+      }
+
+      managedPlacements.push(placement);
+    }
+
+    /*
+     * A non-admin must have at least one placement
+     * they are actually allowed to modify.
+     */
+    if (!isAdmin && managedPlacements.length === 0) {
+      return res.status(403).json({
+        success: false,
+        message: "You do not have permission to update this SiteItem.",
+      });
+    }
+
     /*
      * Fields allowed on the root SiteItem.
      *
@@ -265,13 +659,55 @@ exports.updateSiteItem = async (req, res) => {
       "ingredients",
       "alerts",
       "placements",
+      "recommendations",
     ];
 
-    allowedFields.forEach((field) => {
-      if (req.body[field] !== undefined) {
-        siteItem[field] = req.body[field];
+    const editableFields = isAdmin ? allowedFields : ["placements"];
+
+    editableFields.forEach((field) => {
+      if (req.body[field] === undefined) {
+        return;
       }
+      if (field === "recommendations") {
+        siteItem.recommendations = recommendations;
+        return;
+      }
+
+      /*
+       * Admins can directly update all allowed fields.
+       */
+      if (field !== "placements" || isAdmin) {
+        siteItem[field] = req.body[field];
+        return;
+      }
+
+      /*
+       * Non-admin:
+       * only replace placements belonging to restaurants
+       * they are allowed to manage.
+       */
+      const managedRestaurantIds = new Set(
+        managedPlacements.map((placement) =>
+          String(placement?.restaurant?._id || placement?.restaurant),
+        ),
+      );
+
+      const existingPlacements = Array.isArray(siteItem.placements)
+        ? siteItem.placements
+        : [];
+
+      siteItem.placements = [
+        ...existingPlacements.filter(
+          (placement) =>
+            !managedRestaurantIds.has(
+              String(placement?.restaurant?._id || placement?.restaurant),
+            ),
+        ),
+        ...managedPlacements,
+      ];
     });
+
+    console.log("Placements before save:", siteItem.placements);
 
     await siteItem.save();
 
@@ -395,7 +831,26 @@ exports.placeSiteItem = async (req, res) => {
         message: "SiteItem não encontrado.",
       });
     }
+    console.log("CATEGORY VALIDATION", {
+      restaurantId,
+      categoryId: placement?.category?._id || placement?.category,
+    });
 
+    const categoryValid = await categoryIsPlacedAtRestaurant(
+      placement?.category?._id || placement?.category,
+      restaurantId,
+    );
+
+    console.log("CATEGORY VALID:", categoryValid);
+
+    if (!categoryValid) {
+      return res.status(400).json({
+        success: false,
+        message: "The selected category is not assigned to this restaurant.",
+        restaurantId,
+        categoryId: placement?.category?._id || placement?.category,
+      });
+    }
     // ----------------------------------------------------------
     // FIND RESTAURANT
     // ----------------------------------------------------------
@@ -444,10 +899,24 @@ exports.placeSiteItem = async (req, res) => {
     // ADD PLACEMENT
     // ----------------------------------------------------------
 
-    siteItem.placements.push({
-      restaurant: restaurantId,
-      category: categoryId,
-    });
+    const incompletePlacement = siteItem.placements.find(
+      (placement) =>
+        String(placement.restaurant) === String(restaurantId) &&
+        !placement.category,
+    );
+
+    if (incompletePlacement) {
+      completeRestaurantPlacement(
+        incompletePlacement,
+        siteItem,
+        restaurantId,
+        categoryId,
+      );
+    } else {
+      siteItem.placements.push(
+        createRestaurantPlacement(siteItem, restaurantId, categoryId),
+      );
+    }
 
     await siteItem.save();
 
@@ -480,10 +949,6 @@ exports.placeSiteItem = async (req, res) => {
 
 exports.removeSiteItemPlacement = async (req, res) => {
   try {
-    if (!requireAdmin(req, res)) {
-      return;
-    }
-
     const { id, restaurantId, categoryId } = req.params;
 
     // ----------------------------------------------------------
@@ -504,10 +969,17 @@ exports.removeSiteItemPlacement = async (req, res) => {
       });
     }
 
-    if (!mongoose.Types.ObjectId.isValid(categoryId)) {
+    if (categoryId && !mongoose.Types.ObjectId.isValid(categoryId)) {
       return res.status(400).json({
         success: false,
         message: "ID de categoria inválido.",
+      });
+    }
+
+    if (!(await canManageRestaurant(req.user, restaurantId))) {
+      return res.status(403).json({
+        success: false,
+        message: "You do not have permission to remove this placement.",
       });
     }
 
@@ -531,7 +1003,7 @@ exports.removeSiteItemPlacement = async (req, res) => {
     const placementExists = siteItem.placements.some(
       (placement) =>
         String(placement.restaurant) === String(restaurantId) &&
-        String(placement.category) === String(categoryId),
+        (!categoryId || String(placement.category) === String(categoryId)),
     );
 
     if (!placementExists) {
@@ -550,7 +1022,7 @@ exports.removeSiteItemPlacement = async (req, res) => {
       (placement) =>
         !(
           String(placement.restaurant) === String(restaurantId) &&
-          String(placement.category) === String(categoryId)
+          (!categoryId || String(placement.category) === String(categoryId))
         ),
     );
 
@@ -606,7 +1078,6 @@ exports.updateManySiteItems = async (req, res) => {
 
     const itemsToUpdate = [];
     const itemsToCreate = [];
-
     for (let index = 0; index < items.length; index++) {
       const item = items[index];
 
@@ -631,29 +1102,45 @@ exports.updateManySiteItems = async (req, res) => {
       }
     }
 
+    for (const item of [...itemsToCreate, ...itemsToUpdate]) {
+      if (item.recommendations === undefined) {
+        continue;
+      }
+
+      const validation = await validateRecommendationIds(
+        item.recommendations,
+        item._id || null,
+      );
+      if (validation.error) {
+        return res.status(400).json({
+          success: false,
+          message: validation.error,
+        });
+      }
+      item.recommendations = validation.ids;
+    }
+
     // ==========================================================
     // CREATED
     // ==========================================================
 
-    const createdItems = itemsToCreate.map((item) => ({
-      name: item.name && typeof item.name === "object" ? item.name : {},
-
-      description:
-        item.description && typeof item.description === "object"
-          ? item.description
-          : {},
-
-      image: Array.isArray(item.image) ? item.image : [],
-
-      ingredients: Array.isArray(item.ingredients) ? item.ingredients : [],
-
-      alerts: Array.isArray(item.alerts) ? item.alerts : [],
-
-      allergens: Array.isArray(item.allergens) ? item.allergens : [],
-
-      // New items always start with no placements.
-      placements: [],
-    }));
+    const createdItems = [];
+    for (const item of itemsToCreate) {
+      createdItems.push({
+        name: item.name && typeof item.name === "object" ? item.name : {},
+        description:
+          item.description && typeof item.description === "object"
+            ? item.description
+            : {},
+        image: Array.isArray(item.image) ? item.image : [],
+        ingredients: Array.isArray(item.ingredients) ? item.ingredients : [],
+        alerts: Array.isArray(item.alerts) ? item.alerts : [],
+        allergens: Array.isArray(item.allergens) ? item.allergens : [],
+        recommendations: item.recommendations || [],
+        // New items always start with no placements.
+        placements: [],
+      });
+    }
 
     // ==========================================================
     // CREATE NEW ITEMS
@@ -720,6 +1207,9 @@ exports.updateManySiteItems = async (req, res) => {
         siteItem.ingredients = Array.isArray(item.ingredients)
           ? item.ingredients
           : [];
+      }
+      if (item.recommendations !== undefined) {
+        siteItem.recommendations = item.recommendations;
       }
 
       await siteItem.save();
@@ -859,13 +1349,39 @@ exports.updateAssignmentsSiteItems = catchAsync(async (req, res) => {
       continue;
     }
 
-    siteItem.placements.push({
-      restaurant: restaurantId,
-    });
+    siteItem.placements.push(createRestaurantPlacement(siteItem, restaurantId));
 
     await siteItem.save();
 
     assigned.push(siteItem);
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | SYNC MENU — push newly assigned items into the restaurant's menu
+    |--------------------------------------------------------------------------
+    */
+
+  if (assigned.length > 0) {
+    const restaurant = await Restaurant.findById(restaurantId).select("menus");
+
+    if (restaurant?.menus?.length > 0) {
+      const menuEntry = assigned.map((si) => ({
+        item: si._id,
+        itemModel: "SiteItem",
+      }));
+
+      // Push into every menu that belongs to this restaurant
+      // (most restaurants have one menu, but handles multiple)
+      await Menu.updateMany(
+        { _id: { $in: restaurant.menus } },
+        {
+          $addToSet: {
+            items: { $each: menuEntry },
+          },
+        },
+      );
+    }
   }
 
   /*
@@ -1028,6 +1544,29 @@ exports.deleteAssignmentsSiteItems = catchAsync(async (req, res) => {
 
   /*
     |--------------------------------------------------------------------------
+    | SYNC MENU — pull removed items out of the restaurant's menu
+    |--------------------------------------------------------------------------
+    */
+
+  if (removed.length > 0) {
+    const restaurant = await Restaurant.findById(restaurantId).select("menus");
+
+    if (restaurant?.menus?.length > 0) {
+      const removedIds = removed.map((si) => si._id);
+
+      await Menu.updateMany(
+        { _id: { $in: restaurant.menus } },
+        {
+          $pull: {
+            items: { item: { $in: removedIds } },
+          },
+        },
+      );
+    }
+  }
+
+  /*
+    |--------------------------------------------------------------------------
     | RESPONSE
     |--------------------------------------------------------------------------
     */
@@ -1067,6 +1606,20 @@ exports.updateImage = async (req, res) => {
       return res.status(404).json({
         success: false,
         message: "SiteItem não encontrado.",
+      });
+    }
+
+    let canEditImage = String(req.user?.role || "").toLowerCase() === "admin";
+    for (const placement of siteItem.placements || []) {
+      if (await canManageRestaurant(req.user, placement.restaurant)) {
+        canEditImage = true;
+        break;
+      }
+    }
+    if (!canEditImage) {
+      return res.status(403).json({
+        success: false,
+        message: "You do not have permission to update this image.",
       });
     }
 

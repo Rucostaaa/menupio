@@ -3,9 +3,25 @@
 const Stripe = require("stripe");
 const Restaurant = require("../models/Restaurant.js");
 const User = require("../models/User");
-const MenuItem = require("../models/MenuItem");
+const Menu = require("../models/Menu");
+const SiteItem = require("../models/SiteItem");
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+
+const toPlainObject = (value) => {
+  if (value instanceof Map) return Object.fromEntries(value);
+  if (value && typeof value.toObject === "function") return value.toObject();
+  return value && typeof value === "object" ? value : {};
+};
+
+const getLocalizedValues = (placementValue, siteItemValue) => {
+  const placementValues = toPlainObject(placementValue);
+  const hasPlacementValue = Object.values(placementValues).some(
+    (value) => typeof value === "string" && value.trim(),
+  );
+
+  return hasPlacementValue ? placementValues : toPlainObject(siteItemValue);
+};
 
 // ============================================================
 // HELPERS
@@ -44,6 +60,100 @@ const getStripeAccountId = (restaurant) => {
 // ============================================================
 // GET STRIPE PRODUCTS
 // ============================================================
+
+exports.getStripeMenuItems = async (req, res) => {
+  try {
+    const restaurant = await getOwnerRestaurant(req.user._id);
+    const page = Number(req.query.page ?? 1);
+    const limit = Number(req.query.limit ?? 40);
+
+    if (
+      !Number.isInteger(page) ||
+      page < 1 ||
+      !Number.isInteger(limit) ||
+      limit < 1 ||
+      limit > 100
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "A página e o limite devem ser números válidos (limite máximo: 100).",
+      });
+    }
+
+    const menus = await Menu.find({ restaurant: restaurant._id })
+      .select("items")
+      .lean();
+    const siteItemIds = [
+      ...new Set(
+        menus.flatMap((menu) =>
+          (menu.items || [])
+            .filter((entry) => entry?.itemModel === "SiteItem" && entry.item)
+            .map((entry) => String(entry.item)),
+        ),
+      ),
+    ];
+    const total = siteItemIds.length;
+    const pageIds = siteItemIds.slice((page - 1) * limit, page * limit);
+
+    if (pageIds.length === 0) {
+      return res.json({
+        success: true,
+        items: [],
+        pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+      });
+    }
+
+    const siteItems = await SiteItem.find({
+      _id: { $in: pageIds },
+      "placements.restaurant": restaurant._id,
+    }).lean();
+    const siteItemsById = new Map(
+      siteItems.map((siteItem) => [String(siteItem._id), siteItem]),
+    );
+    const items = pageIds.flatMap((siteItemId) => {
+      const siteItem = siteItemsById.get(siteItemId);
+      const placement = siteItem?.placements?.find(
+        (entry) => String(entry.restaurant) === String(restaurant._id),
+      );
+
+      if (!siteItem || !placement) return [];
+
+      return [
+        {
+          _id: siteItem._id,
+          name: getLocalizedValues(placement.name, siteItem.name),
+          description: getLocalizedValues(
+            placement.description,
+            siteItem.description,
+          ),
+          price: placement.price,
+          models: placement.models || [],
+          image: placement.image?.length ? placement.image : siteItem.image,
+          available: true,
+          stripe: placement.stripe || {},
+        },
+      ];
+    });
+
+    return res.json({
+      success: true,
+      items,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    });
+  } catch (error) {
+    console.error("GET STRIPE MENU ITEMS ERROR:", error);
+    return res.status(error.statusCode || 500).json({
+      success: false,
+      message: error.message || "Não foi possível carregar os produtos do menu.",
+    });
+  }
+};
 
 exports.getStripeProducts = async (req, res) => {
   try {
@@ -90,12 +200,28 @@ exports.createStripeProduct = async (req, res) => {
     // GET MENU ITEM ID
     // ----------------------------------------------------------
 
-    const { menuItemId } = req.body;
+    const { siteItemId } = req.body;
 
-    if (!menuItemId) {
+    if (!siteItemId) {
       return res.status(400).json({
         success: false,
         message: "O ID do produto é obrigatório.",
+      });
+    }
+
+    const isInRestaurantMenu = await Menu.exists({
+      restaurant: restaurant._id,
+      items: {
+        $elemMatch: {
+          item: siteItemId,
+          itemModel: "SiteItem",
+        },
+      },
+    });
+    if (!isInRestaurantMenu) {
+      return res.status(404).json({
+        success: false,
+        message: "Este produto não está num menu deste negócio.",
       });
     }
 
@@ -103,31 +229,25 @@ exports.createStripeProduct = async (req, res) => {
     // FIND MENU ITEM
     // ----------------------------------------------------------
 
-    const menuItem = await MenuItem.findById(menuItemId);
+    const siteItem = await SiteItem.findOne({
+      _id: siteItemId,
+      "placements.restaurant": restaurant._id,
+    });
 
-    if (!menuItem) {
+    if (!siteItem) {
       return res.status(404).json({
         success: false,
         message: "Produto não encontrado.",
       });
     }
 
-    // ----------------------------------------------------------
-    // SECURITY
-    // ----------------------------------------------------------
-    // Make sure this MenuItem actually belongs to the restaurant
-    // whose Stripe account we are using.
-    //
-    // Adjust this condition depending on your MenuItem schema.
-    // ----------------------------------------------------------
-
-    if (
-      menuItem.restaurant &&
-      String(menuItem.restaurant) !== String(restaurant._id)
-    ) {
-      return res.status(403).json({
+    const placement = siteItem.placements.find(
+      (entry) => String(entry.restaurant) === String(restaurant._id),
+    );
+    if (!placement) {
+      return res.status(404).json({
         success: false,
-        message: "Este produto não pertence ao seu negócio.",
+        message: "Este produto não está atribuído ao seu negócio.",
       });
     }
 
@@ -135,12 +255,12 @@ exports.createStripeProduct = async (req, res) => {
     // ALREADY CONNECTED?
     // ----------------------------------------------------------
 
-    if (menuItem.stripe?.productId) {
+    if (placement.stripe?.productId) {
       return res.status(409).json({
         success: false,
         message: "Este produto já está ligado ao Stripe.",
-        stripeProductId: menuItem.stripe.productId,
-        stripePriceId: menuItem.stripe.priceId || null,
+        stripeProductId: placement.stripe.productId,
+        stripePriceId: placement.stripe.priceId || null,
       });
     }
 
@@ -149,21 +269,32 @@ exports.createStripeProduct = async (req, res) => {
     // ----------------------------------------------------------
 
     const name =
-      typeof menuItem.name === "string"
-        ? menuItem.name.trim()
-        : menuItem.name?.pt ||
-          menuItem.name?.en ||
-          Object.values(menuItem.name || {})[0] ||
-          "";
+      placement.name?.get?.("pt") ||
+      placement.name?.get?.("en") ||
+      placement.name?.pt ||
+      placement.name?.en ||
+      Object.values(placement.name?.toObject?.() || placement.name || {})[0] ||
+      siteItem.name?.get?.("pt") ||
+      siteItem.name?.get?.("en") ||
+      siteItem.name?.pt ||
+      siteItem.name?.en ||
+      Object.values(siteItem.name?.toObject?.() || siteItem.name || {})[0] ||
+      "";
 
     const description =
-      typeof menuItem.description === "string"
-        ? menuItem.description.trim()
-        : menuItem.description?.pt || menuItem.description?.en || "";
+      placement.description?.get?.("pt") ||
+      placement.description?.get?.("en") ||
+      placement.description?.pt ||
+      placement.description?.en ||
+      siteItem.description?.get?.("pt") ||
+      siteItem.description?.get?.("en") ||
+      siteItem.description?.pt ||
+      siteItem.description?.en ||
+      "";
 
-    const numericPrice = Number(menuItem.price);
+    const numericPrice = Number(placement.price);
 
-    const active = menuItem.available !== false;
+    const active = true;
 
     // ----------------------------------------------------------
     // VALIDATE PRODUCT DATA
@@ -193,7 +324,7 @@ exports.createStripeProduct = async (req, res) => {
         description: description || undefined,
         active,
         metadata: {
-          menupioMenuItemId: String(menuItem._id),
+          menupioSiteItemId: String(siteItem._id),
           menupioRestaurantId: String(restaurant._id),
         },
       },
@@ -218,28 +349,19 @@ exports.createStripeProduct = async (req, res) => {
     );
 
     // ----------------------------------------------------------
-    // SAVE STRIPE DATA ON MENUPIO PRODUCT
+    // SAVE STRIPE DATA ON THIS RESTAURANT'S SITE ITEM PLACEMENT
     // ----------------------------------------------------------
 
-    menuItem.stripe = {
-      ...(menuItem.stripe?.toObject
-        ? menuItem.stripe.toObject()
-        : menuItem.stripe || {}),
-
+    placement.stripe = {
       connected: true,
-
       productId: stripeProduct.id,
-
       priceId: stripePrice.id,
-
       currency: "eur",
-
       active: Boolean(active),
-
       syncedAt: new Date(),
     };
 
-    await menuItem.save();
+    await siteItem.save();
 
     // ----------------------------------------------------------
     // RETRIEVE STRIPE PRODUCT WITH PRICE
@@ -264,7 +386,16 @@ exports.createStripeProduct = async (req, res) => {
 
       message: "Produto ligado ao Stripe com sucesso.",
 
-      menuItem,
+      siteItem: {
+        _id: siteItem._id,
+        name,
+        description,
+        price: placement.price,
+        models: placement.models,
+        image: placement.image?.length ? placement.image : siteItem.image,
+        available: true,
+        stripe: placement.stripe,
+      },
 
       product: productWithPrice,
 
@@ -488,41 +619,6 @@ exports.createStripePrice = async (req, res) => {
 };
 
 // ============================================================
-// VENDOR MODE
-// ============================================================
-
-exports.updateVendorMode = async (req, res) => {
-  try {
-    const restaurant = await getOwnerRestaurant(req.user._id);
-
-    const { enabled } = req.body;
-
-    restaurant.stripe = {
-      ...(restaurant.stripe?.toObject
-        ? restaurant.stripe.toObject()
-        : restaurant.stripe || {}),
-
-      vendorMode: Boolean(enabled),
-    };
-    console.log(restaurant);
-
-    await restaurant.save();
-
-    return res.status(200).json({
-      success: true,
-      vendorMode: restaurant.stripe.vendorMode,
-    });
-  } catch (error) {
-    console.error("UPDATE VENDOR MODE ERROR:", error);
-
-    return res.status(error.statusCode || 500).json({
-      success: false,
-      message: error.message || "Não foi possível atualizar o Vendor Mode.",
-    });
-  }
-};
-
-// ============================================================
 // CONNECT STRIPE
 // ============================================================
 
@@ -624,13 +720,7 @@ exports.connectStripe = async (req, res) => {
 
       accountId = account.id;
 
-      restaurant.stripe = {
-        ...(restaurant.stripe?.toObject
-          ? restaurant.stripe.toObject()
-          : restaurant.stripe || {}),
-
-        accountId,
-      };
+      restaurant.set("stripe.accountId", accountId);
 
       await restaurant.save();
     }
@@ -764,19 +854,12 @@ exports.getStripeStatus = async (req, res) => {
     // UPDATE DATABASE
     // ----------------------------------------------------------
 
-    restaurant.stripe = {
-      ...(restaurant.stripe?.toObject
-        ? restaurant.stripe.toObject()
-        : restaurant.stripe || {}),
-
-      accountId: account.id,
-
-      detailsSubmitted,
-
-      chargesEnabled,
-
-      payoutsEnabled,
-    };
+    restaurant.set({
+      "stripe.accountId": account.id,
+      "stripe.detailsSubmitted": detailsSubmitted,
+      "stripe.chargesEnabled": chargesEnabled,
+      "stripe.payoutsEnabled": payoutsEnabled,
+    });
 
     await restaurant.save();
 
@@ -833,26 +916,199 @@ exports.getStripeStatus = async (req, res) => {
     });
   }
 };
+
+exports.getStripeFinance = async (req, res) => {
+  try {
+    const restaurant = await getOwnerRestaurant(req.user?._id);
+    const accountId = getStripeAccountId(restaurant);
+    const transactionSummaryPromise = (async () => {
+      const summary = {
+        recent: [],
+        gross: 0,
+        net: 0,
+        transactionCount: 0,
+      };
+      const transactionList = stripe.balanceTransactions.list(
+        {
+          limit: 100,
+          created: {
+            gte: Math.floor(Date.now() / 1000) - 30 * 24 * 60 * 60,
+          },
+        },
+        { stripeAccount: accountId },
+      );
+
+      await transactionList.autoPagingEach((transaction) => {
+        const isSale = ["charge", "payment"].includes(transaction.type);
+        if (isSale) {
+          summary.gross += transaction.amount;
+          summary.net += transaction.net;
+          summary.transactionCount += 1;
+        } else if (transaction.type === "refund") {
+          summary.net += transaction.net;
+        }
+
+        if (summary.recent.length < 100) {
+          summary.recent.push({
+            id: transaction.id,
+            amount: transaction.amount,
+            fee: transaction.fee,
+            net: transaction.net,
+            currency: transaction.currency,
+            type: transaction.type,
+            description: transaction.description,
+            status: transaction.status,
+            created: transaction.created,
+            reportingCategory: transaction.reporting_category,
+          });
+        }
+      });
+
+      return summary;
+    })();
+    const [account, balance, transactionSummary, payouts] = await Promise.all([
+      stripe.accounts.retrieve(accountId),
+      stripe.balance.retrieve({}, { stripeAccount: accountId }),
+      transactionSummaryPromise,
+      stripe.payouts.list({ limit: 20 }, { stripeAccount: accountId }),
+    ]);
+
+    const schedule = {
+      interval:
+        account.settings?.payouts?.schedule?.interval || "manual",
+      weeklyAnchor:
+        account.settings?.payouts?.schedule?.weekly_anchor || null,
+    };
+
+    if (
+      restaurant.stripe?.payoutSchedule?.interval !== schedule.interval ||
+      restaurant.stripe?.payoutSchedule?.weeklyAnchor !== schedule.weeklyAnchor
+    ) {
+      restaurant.stripe.payoutSchedule = schedule;
+      await restaurant.save();
+    }
+
+    return res.status(200).json({
+      success: true,
+      balance: {
+        available: balance.available || [],
+        pending: balance.pending || [],
+      },
+      revenue30Days: {
+        gross: transactionSummary.gross,
+        net: transactionSummary.net,
+        currency: account.default_currency || "eur",
+        transactionCount: transactionSummary.transactionCount,
+      },
+      transactions: transactionSummary.recent,
+      payouts: (payouts.data || []).map((payout) => ({
+        id: payout.id,
+        amount: payout.amount,
+        currency: payout.currency,
+        status: payout.status,
+        arrivalDate: payout.arrival_date,
+        created: payout.created,
+        description: payout.description,
+        failureCode: payout.failure_code,
+        failureMessage: payout.failure_message,
+      })),
+      schedule,
+    });
+  } catch (error) {
+    console.error("GET STRIPE FINANCE ERROR:", error);
+    return res.status(error.statusCode || 500).json({
+      success: false,
+      message: error?.message || "Não foi possível carregar os dados financeiros.",
+    });
+  }
+};
+
+exports.updateStripePayoutSchedule = async (req, res) => {
+  try {
+    const { interval, weeklyAnchor } = req.body || {};
+    if (
+      !["daily", "weekly"].includes(interval) ||
+      (interval === "weekly" &&
+        ![
+          "monday",
+          "tuesday",
+          "wednesday",
+          "thursday",
+          "friday",
+          "saturday",
+          "sunday",
+        ].includes(weeklyAnchor))
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Choose daily payouts or a valid weekly payout day.",
+      });
+    }
+
+    const restaurant = await getOwnerRestaurant(req.user?._id);
+    const accountId = getStripeAccountId(restaurant);
+    if (restaurant.stripe?.payoutsEnabled !== true) {
+      return res.status(409).json({
+        success: false,
+        message: "Stripe payouts are not enabled for this connected account.",
+      });
+    }
+
+    const schedule = {
+      interval,
+      ...(interval === "weekly" ? { weekly_anchor: weeklyAnchor } : {}),
+    };
+    const account = await stripe.accounts.update(accountId, {
+      settings: {
+        payouts: { schedule },
+      },
+    });
+
+    restaurant.stripe.payoutSchedule = {
+      interval: account.settings?.payouts?.schedule?.interval || interval,
+      weeklyAnchor:
+        account.settings?.payouts?.schedule?.weekly_anchor ||
+        (interval === "weekly" ? weeklyAnchor : null),
+    };
+    await restaurant.save();
+
+    return res.status(200).json({
+      success: true,
+      schedule: restaurant.stripe.payoutSchedule,
+    });
+  } catch (error) {
+    console.error("UPDATE STRIPE PAYOUT SCHEDULE ERROR:", error);
+    return res.status(error.statusCode || 500).json({
+      success: false,
+      message: error?.message || "Não foi possível alterar a frequência dos pagamentos.",
+    });
+  }
+};
 // ============================================================
 // VENDOR MODE
 // ============================================================
 
 exports.updateVendorMode = async (req, res) => {
   try {
-    const restaurant = await getOwnerRestaurant(req.user._id);
+    const { enabled } = req.body || {};
+    if (typeof enabled !== "boolean") {
+      return res.status(400).json({
+        success: false,
+        message: "Vendor Mode must be enabled or disabled with a boolean value.",
+      });
+    }
 
-    const { enabled } = req.body;
-
-    restaurant.stripe = {
-      ...(restaurant.stripe || {}),
-      vendorMode: Boolean(enabled),
-    };
-
-    await restaurant.save();
+    const restaurant = await getOwnerRestaurant(req.user?._id);
+    await Restaurant.updateOne(
+      { _id: restaurant._id, owner: req.user._id },
+      { $set: { "stripe.vendorMode": enabled } },
+      { runValidators: true },
+    );
 
     return res.status(200).json({
       success: true,
-      vendorMode: restaurant.stripe.vendorMode,
+      vendorMode: enabled,
     });
   } catch (error) {
     console.error("UPDATE VENDOR MODE ERROR:", error);
@@ -917,6 +1173,20 @@ exports.connectStripe = async (req, res) => {
 
     let accountId = restaurant.stripe?.accountId;
 
+    if (accountId) {
+      const existingAccount = await stripe.accounts.retrieve(accountId);
+      if (existingAccount.details_submitted) {
+        return res.status(409).json({
+          success: false,
+          detailsSubmitted: true,
+          chargesEnabled: Boolean(existingAccount.charges_enabled),
+          message: existingAccount.charges_enabled
+            ? "Stripe onboarding is complete. Activate menu payments in Stripe Settings."
+            : "Your documents have been submitted. Wait for Stripe to finish reviewing your account.",
+        });
+      }
+    }
+
     // ---------------------------------------------------------
     // CREATE EXPRESS CONNECT ACCOUNT
     // ---------------------------------------------------------
@@ -940,10 +1210,7 @@ exports.connectStripe = async (req, res) => {
 
       accountId = account.id;
 
-      restaurant.stripe = {
-        ...(restaurant.stripe || {}),
-        accountId,
-      };
+      restaurant.set("stripe.accountId", accountId);
 
       await restaurant.save();
     }
@@ -1062,17 +1329,12 @@ exports.getStripeStatus = async (req, res) => {
     // UPDATE DATABASE
     // ----------------------------------------------------------
 
-    restaurant.stripe = {
-      ...(restaurant.stripe?.toObject
-        ? restaurant.stripe.toObject()
-        : restaurant.stripe || {}),
-
-      accountId: account.id,
-
-      detailsSubmitted,
-      chargesEnabled,
-      payoutsEnabled,
-    };
+    restaurant.set({
+      "stripe.accountId": account.id,
+      "stripe.detailsSubmitted": detailsSubmitted,
+      "stripe.chargesEnabled": chargesEnabled,
+      "stripe.payoutsEnabled": payoutsEnabled,
+    });
 
     await restaurant.save();
 

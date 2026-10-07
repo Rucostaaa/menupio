@@ -1,4 +1,4 @@
-const express = require("express");
+﻿const express = require("express");
 
 const {
   heartbeat,
@@ -7,9 +7,11 @@ const {
   identifySession,
   trackProductClick,
   getSessionsByScreen,
+  getSessionHistory,
 } = require("../controllers/session");
 
 const auth = require("../middleware/auth");
+const allowedRoles = require("../middleware/allowedRoles");
 
 const router = express.Router();
 
@@ -21,7 +23,9 @@ router.post("/identify", auth, identifySession);
 
 router.get("/by-screen/:screenId", auth, getSessionsByScreen);
 router.get("/active", auth, getActiveSessions);
+router.get("/history", auth, allowedRoles(["Admin"]), getSessionHistory);
 
 router.post("/end", endSession);
 
 module.exports = router;
+

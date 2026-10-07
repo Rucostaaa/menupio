@@ -93,6 +93,19 @@ const createManySiteMainCategory = catchAsync(async (req, res) => {
   });
 });
 
+const createSiteMainCategory = catchAsync(async (req, res) => {
+  const { name } = req.body;
+
+  if (!name || typeof name !== "object" || Array.isArray(name)) {
+    return res.status(400).json({
+      message: "A multilingual main category name is required.",
+    });
+  }
+
+  const mainCategory = await SiteMainCategory.create({ name });
+  return res.status(201).json(mainCategory);
+});
+
 const updateManySiteMainCategories = catchAsync(async (req, res) => {
   if (!Array.isArray(req.body)) {
     return res.status(400).json({
@@ -203,6 +216,11 @@ const deleteSiteMainCategory = catchAsync(async (req, res) => {
       message: "SiteMainCategory not found.",
     });
   }
+
+  await SiteCategory.updateMany(
+    { siteMainCategory: req.params.id },
+    { $set: { siteMainCategory: null } },
+  );
 
   res.json({
     message: "SiteMainCategory deleted successfully.",
@@ -378,6 +396,7 @@ const removeCategoryFromMainCategory = catchAsync(async (req, res) => {
 });
 
 module.exports = {
+  createSiteMainCategory,
   createManySiteMainCategory,
   getSiteMainCategories,
   getSiteMainCategory,

@@ -23,6 +23,8 @@ const restaurantSchema = new mongoose.Schema(
         default: ["pt", "en"],
       },
     ],
+    itemsBackground: { String },
+
     name: String,
     description: String,
     mlDescription: [
@@ -78,8 +80,41 @@ const restaurantSchema = new mongoose.Schema(
         type: Boolean,
         default: false,
       },
+      payoutSchedule: {
+        interval: {
+          type: String,
+          enum: ["manual", "daily", "weekly"],
+          default: "manual",
+        },
+        weeklyAnchor: {
+          type: String,
+          default: null,
+        },
+      },
+    },
+    billing: {
+      stripeCustomerId: {
+        type: String,
+        default: null,
+        index: true,
+      },
+      checkoutLockAt: {
+        type: Date,
+        default: null,
+      },
+    },
+    menuCheckoutMode: {
+      type: String,
+      enum: ["pay_later", "pay_now"],
+      default: "pay_later",
     },
     coverImage: String,
+    tvCategories: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "SiteCategory",
+      },
+    ],
     language: {
       type: [String],
       enum: languages.map((item) => item.title),
@@ -104,6 +139,18 @@ const restaurantSchema = new mongoose.Schema(
           ref: "SiteItem",
           default: null,
         },
+        siteItems: [
+          {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "SiteItem",
+          },
+        ],
+        siteCategories: [
+          {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "SiteCategory",
+          },
+        ],
         maxStamps: {
           type: Number,
           default: 10,

@@ -263,8 +263,8 @@ const userSchema = new mongoose.Schema(
         },
         menuItem: {
           type: mongoose.Schema.Types.ObjectId,
-          ref: "MenuItem",
-          required: true,
+          ref: "SiteItem",
+          default: null,
         },
         maxStamps: {
           type: Number,
@@ -278,6 +278,7 @@ const userSchema = new mongoose.Schema(
           min: 0,
           max: 100,
         },
+        freeCoffes: { type: Number, default: 0 },
 
         history: [
           {
@@ -300,8 +301,39 @@ const userSchema = new mongoose.Schema(
             },
           },
         ],
+
       },
     ],
+
+    games: {
+      bellumNumerus: {
+        matches: { type: Number, default: 0, min: 0 },
+        wins: { type: Number, default: 0, min: 0 },
+        losses: { type: Number, default: 0, min: 0 },
+        draws: { type: Number, default: 0, min: 0 },
+        trophies: {
+          type: [String],
+          enum: [
+            "first-match",
+            "first-victory",
+            "five-victories",
+            "twenty-five-victories",
+          ],
+          default: [],
+        },
+      },
+      mixedMathQuiz: {
+        played: { type: Number, default: 0, min: 0 },
+        bestScore: { type: Number, default: 0, min: 0 },
+        questionsAnswered: { type: Number, default: 0, min: 0 },
+        correctAnswers: { type: Number, default: 0, min: 0 },
+      },
+      wordSearch: {
+        played: { type: Number, default: 0, min: 0 },
+        bestScore: { type: Number, default: 0, min: 0 },
+      },
+    },
+
     available: { type: Boolean, default: true },
     bookings: [
       {

@@ -31,6 +31,16 @@ const siteCategorySchema = new mongoose.Schema(
           type: mongoose.Schema.Types.ObjectId,
           ref: "Restaurant",
         },
+        firstToRender: {
+          type: Boolean,
+          default: false,
+        },
+        recommendations: [
+          {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "SiteCategory",
+          },
+        ],
       },
     ],
   },

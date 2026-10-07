@@ -8,6 +8,7 @@ const {
   getSiteCategories,
   getSiteCategory,
   updateSiteCategory,
+  setFirstToRender,
   deleteSiteCategory,
   updateManySiteCategories,
   placeSiteCategory,
@@ -15,15 +16,17 @@ const {
   updateSiteCategoryImage,
   placeSiteItemCategory,
   updateImageSettings,
+  createSiteCategory,
 } = require("../controllers/siteCategory");
 
-router.route("/").get(auth, getSiteCategories);
+router.route("/").get(auth, getSiteCategories).post(auth, createSiteCategory);
 
 router
   .route("/bulk")
   .patch(auth, updateManySiteCategories)
   .post(auth, createManySiteCategory);
 router.post("/products/:id/place", auth, placeSiteItemCategory);
+router.patch("/:id/first-to-render", auth, setFirstToRender);
 
 router
   .route("/:id")

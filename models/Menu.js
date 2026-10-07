@@ -89,6 +89,7 @@ const menuSchema = new mongoose.Schema(
     settings: {
       type: Object,
     },
+    backgroundImage: String,
   },
 
   {

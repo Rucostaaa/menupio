@@ -2,12 +2,10 @@ const jwt = require("jsonwebtoken");
 const User = require("../models/User");
 
 module.exports = async (req, res, next) => {
-  console.log("here");
 
   try {
     const token = req.headers.authorization?.split(" ")[1];
-
-    if (!token) {
+        if (!token) {
       return res.status(401).json({
         message: "Unauthorized",
       });
@@ -24,7 +22,6 @@ module.exports = async (req, res, next) => {
         path: "loyaltyCards.menuItem",
         select: "name images",
       });
-
     next();
   } catch {
     res.status(401).json({

@@ -1,8 +1,13 @@
 const Restaurant = require("../models/Restaurant");
+const mongoose = require("mongoose");
 const User = require("../models/User");
 const Menu = require("../models/Menu");
 const cloudinary = require("../utils/Claudinary");
 const catchAsync = require("../utils/catchAsync");
+const {
+  hasLoyaltyTargets,
+  resolveLoyaltyTargets,
+} = require("../utils/loyaltyConfig");
 const { log } = require("node:console");
 const languages = [
   { title: "pt", language: "Português" },
@@ -82,6 +87,12 @@ const restaurantPopulation = [
     select:
       "_id name username firstName lastName email role avatar avatarUrl profileImage schedule",
   },
+  {
+    path: "menus",
+    model: "Menu",
+    select:
+      "_id name slug backgroundImage mainImage mainCategory categories items restaurant",
+  },
 ];
 
 // ============================================================
@@ -91,6 +102,11 @@ const restaurantPopulation = [
 exports.createRestaurant = catchAsync(async (req, res) => {
   if (req?.body?.fidelization?.menuItem === "") {
     req.body.fidelization.menuItem = null;
+  }
+  // Products/categories can only be linked after the restaurant exists.
+  if (req?.body?.fidelization) {
+    delete req.body.fidelization.siteItems;
+    delete req.body.fidelization.siteCategories;
   }
 
   const restaurant = await Restaurant.create({
@@ -114,7 +130,8 @@ exports.createRestaurant = catchAsync(async (req, res) => {
 exports.getAllRestaurants = catchAsync(async (req, res) => {
   const restaurants = await Restaurant.find({})
     .populate(restaurantPopulation[0])
-    .populate(restaurantPopulation[1]);
+    .populate(restaurantPopulation[1])
+    .populate(restaurantPopulation[2]);
 
   return res.status(200).json({
     success: true,
@@ -126,8 +143,9 @@ exports.getRestaurants = catchAsync(async (req, res) => {
     owner: req.user._id,
   })
     .populate(restaurantPopulation[0])
-    .populate(restaurantPopulation[1]);
-
+    .populate(restaurantPopulation[1])
+    .populate(restaurantPopulation[2]);
+  console.log(restaurants);
   return res.status(200).json({
     success: true,
     restaurants,
@@ -141,7 +159,8 @@ exports.getRestaurants = catchAsync(async (req, res) => {
 exports.getRestaurant = catchAsync(async (req, res) => {
   const restaurant = await Restaurant.findById(req.params.id)
     .populate(restaurantPopulation[0])
-    .populate(restaurantPopulation[1]);
+    .populate(restaurantPopulation[1])
+    .populate(restaurantPopulation[2]);
 
   if (!restaurant) {
     return res.status(404).json({
@@ -204,7 +223,8 @@ exports.getEmployerRestaurant = catchAsync(async (req, res) => {
     employers: user._id,
   })
     .populate(restaurantPopulation[0])
-    .populate(restaurantPopulation[1]);
+    .populate(restaurantPopulation[1])
+    .populate(restaurantPopulation[2]);
 
   if (!restaurant) {
     return res.status(404).json({
@@ -301,7 +321,23 @@ exports.updateRestaurant = catchAsync(async (req, res) => {
     whatsAppNumber,
     hasFidelization,
     fidelization,
+    menuCheckoutMode,
+    tvCategories,
   } = req.body;
+
+  if (tvCategories !== undefined) {
+    if (
+      !Array.isArray(tvCategories) ||
+      !tvCategories.every((id) => mongoose.Types.ObjectId.isValid(id))
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "tvCategories must be an array of category IDs.",
+      });
+    }
+
+    restaurant.tvCategories = [...new Set(tvCategories.map(String))];
+  }
 
   // ==========================================================
   // BASIC INFORMATION
@@ -362,18 +398,61 @@ exports.updateRestaurant = catchAsync(async (req, res) => {
     restaurant.whatsAppNumber = whatsAppNumber;
   }
 
+  if (menuCheckoutMode !== undefined) {
+    if (!["pay_later", "pay_now"].includes(menuCheckoutMode)) {
+      return res.status(400).json({
+        success: false,
+        message: "menuCheckoutMode must be pay_later or pay_now.",
+      });
+    }
+
+    if (
+      menuCheckoutMode === "pay_now" &&
+      restaurant.stripe?.chargesEnabled !== true
+    ) {
+      return res.status(409).json({
+        success: false,
+        message:
+          "Complete Stripe payment activation before enabling menu checkout.",
+      });
+    }
+
+    restaurant.menuCheckoutMode = menuCheckoutMode;
+  }
+
   if (hasFidelization !== undefined) {
     restaurant.hasFidelization =
       hasFidelization === true || hasFidelization === "true";
   }
 
-  if (fidelization !== undefined) {
-    const menuItemId = fidelization?.menuItem || null;
+  if (fidelization !== undefined && !restaurant.hasFidelization) {
+    // Loyalty is off: never validate or overwrite stored targets.
     const maxStamps = Number(fidelization?.maxStamps);
+    if (Number.isInteger(maxStamps) && maxStamps >= 1 && maxStamps <= 100) {
+      const current = restaurant.fidelization?.[0] || restaurant.fidelization || {};
+      restaurant.fidelization = {
+        menuItem: current.menuItem || null,
+        siteItems: current.siteItems || [],
+        siteCategories: current.siteCategories || [],
+        maxStamps,
+      };
+    }
+  } else if (fidelization !== undefined) {
+    const maxStamps = Number(fidelization?.maxStamps);
+    let targets;
+
+    try {
+      targets = await resolveLoyaltyTargets(restaurant, fidelization || {});
+    } catch (error) {
+      return res.status(error.statusCode || 500).json({
+        success: false,
+        message: error.message,
+      });
+    }
 
     if (
       restaurant.hasFidelization &&
-      (!menuItemId ||
+      (!hasLoyaltyTargets(targets) ||
         !Number.isInteger(maxStamps) ||
         maxStamps < 1 ||
         maxStamps > 100)
@@ -381,27 +460,12 @@ exports.updateRestaurant = catchAsync(async (req, res) => {
       return res.status(400).json({
         success: false,
         message:
-          "Fidelization requires a menu item and maxStamps between 1 and 100.",
+          "Fidelization requires at least one product or category and maxStamps between 1 and 100.",
       });
-    }
-
-    if (menuItemId) {
-      const MenuItem = require("../models/MenuItem");
-      const menuItem = await MenuItem.findOne({
-        _id: menuItemId,
-        restaurant: restaurant._id,
-      });
-
-      if (!menuItem) {
-        return res.status(400).json({
-          success: false,
-          message: "The loyalty menu item must belong to this restaurant.",
-        });
-      }
     }
 
     restaurant.fidelization = {
-      menuItem: menuItemId,
+      ...targets,
       maxStamps: Number.isInteger(maxStamps) ? maxStamps : 10,
     };
   }

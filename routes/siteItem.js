@@ -23,7 +23,7 @@ const {
 // SITE ITEMS
 // ============================================================
 
-router.route("/").get(auth, getSiteItems);
+router.route("/").get(auth, getSiteItems).post(auth, createSiteItem);
 router.route("/owner/:id").get(auth, getOwnerSiteItems);
 
 router.route("/bulk").patch(auth, updateManySiteItems);
@@ -43,6 +43,7 @@ router
 // ============================================================
 
 router.post("/:id/place", auth, placeSiteItem);
+router.delete("/:id/place/:restaurantId", auth, removeSiteItemPlacement);
 router.put("/:id/image", auth, upload.single("image"), updateImage);
 router.put("/:id/imageSettings", auth, updateImageSettings);
 

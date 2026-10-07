@@ -13,25 +13,29 @@ const {
   bulkMenu,
 } = require("../controllers/admin");
 const auth = require("../middleware/auth");
+const allowedRoles = require("../middleware/allowedRoles");
 
 const router = require("express").Router();
 
+router.use(auth, allowedRoles(["Admin"]));
+
 router
   .route("/restaurant")
-  .get(auth, getAllRestaurants)
-  .post(auth, createRestaurant);
+  .get(getAllRestaurants)
+  .post(createRestaurant);
 
-router.route("/products").post(auth, createSingleProduct);
+router.route("/products").post(createSingleProduct);
 
 router
   .route("/products/bulk")
-  .get(auth, getAllProducts)
-  .post(auth, bulkProducts);
+  .get(getAllProducts)
+  .post(bulkProducts);
 router.put("/categories/bulk", bulkCategories);
 router.post("/restaurant/:id/bulk", bulkMenu);
 
-router.route("/users").get(auth, getAllUsers);
-router.route("/screens").get(auth, getAllMenus);
-router.route("/screen/:id").put(auth, updateMenu).delete(auth, deleteMenu);
-router.patch("/users/:id/role", auth, updateAdminUserRole);
+router.route("/users").get(getAllUsers);
+router.route("/screens").get(getAllMenus);
+router.route("/screen/:id").put(updateMenu).delete(deleteMenu);
+router.patch("/users/:id/role", updateAdminUserRole);
+router.use("/subscription-plans", require("./subscriptionPlans"));
 module.exports = router;

@@ -1,6 +1,7 @@
 const mongoose = require("mongoose");
 const fs = require("fs/promises");
 const SiteItem = require("../models/SiteItem");
+const Restaurant = require("../models/Restaurant");
 
 const Image = require("../models/Image");
 const cloudinary = require("../utils/Claudinary");
@@ -37,6 +38,41 @@ const deleteFromCloudinary = async (publicId) => {
   } catch (error) {
     console.error(`Cloudinary delete failed for ${publicId}:`, error.message);
   }
+};
+
+const canManageSiteItem = async (user, siteItem) => {
+  if (String(user?.role || "").toLowerCase() === "admin") return true;
+
+  for (const placement of siteItem?.placements || []) {
+    const restaurantId = placement.restaurant?._id || placement.restaurant;
+    const restaurant = await Restaurant.exists({
+      _id: restaurantId,
+      $or: [{ owner: user?._id }, { employers: user?._id }],
+    });
+    if (restaurant) return true;
+  }
+
+  return false;
+};
+
+const getRestaurantPlacement = (siteItem, restaurantId) =>
+  siteItem?.placements?.find(
+    (placement) =>
+      String(placement?.restaurant?._id || placement?.restaurant) ===
+      String(restaurantId),
+  );
+
+const canManageRestaurantPlacement = async (user, placement) => {
+  if (String(user?.role || "").toLowerCase() === "admin") return true;
+  if (!placement) return false;
+
+  const restaurantId = placement.restaurant?._id || placement.restaurant;
+  return Boolean(
+    await Restaurant.exists({
+      _id: restaurantId,
+      $or: [{ owner: user?._id }, { employers: user?._id }],
+    }),
+  );
 };
 
 const isValidObjectId = (id) => {
@@ -828,15 +864,23 @@ const parseJson = (value, fallback = null) => {
   }
 };
 
-const findExistingImageDocument = async (siteItem) => {
+const findExistingImageDocument = async (siteItem, restaurantId = null) => {
   if (!siteItem) {
     return null;
   }
 
-  const imageReferences = Array.isArray(siteItem.images)
-    ? siteItem.images
-    : siteItem.images
-      ? [siteItem.images]
+  const referenceOwner = restaurantId
+    ? getRestaurantPlacement(siteItem, restaurantId)
+    : siteItem;
+
+  if (!referenceOwner) {
+    return null;
+  }
+
+  const imageReferences = Array.isArray(referenceOwner.images)
+    ? referenceOwner.images
+    : referenceOwner.images
+      ? [referenceOwner.images]
       : [];
 
   const imageIds = imageReferences
@@ -921,11 +965,40 @@ const createSiteItemImage = async (req, res) => {
       });
     }
 
+    const restaurantId = req.query.restaurantId || null;
+    let placement = null;
+
+    if (restaurantId) {
+      if (!isValidObjectId(restaurantId)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid restaurant ID",
+        });
+      }
+
+      placement = getRestaurantPlacement(siteItem, restaurantId);
+      if (!(await canManageRestaurantPlacement(req.user, placement))) {
+        return res.status(403).json({
+          success: false,
+          message:
+            "You do not have permission to edit this restaurant placement image.",
+        });
+      }
+    } else if (!(await canManageSiteItem(req.user, siteItem))) {
+      return res.status(403).json({
+        success: false,
+        message: "You do not have permission to edit this SiteItem image.",
+      });
+    }
+
     // ========================================================
     // FIND EXISTING IMAGE DOCUMENT
     // ========================================================
 
-    let imageDocument = await findExistingImageDocument(siteItem);
+    let imageDocument = await findExistingImageDocument(
+      siteItem,
+      restaurantId,
+    );
 
     const isUpdating = !!imageDocument;
 
@@ -1033,16 +1106,7 @@ const createSiteItemImage = async (req, res) => {
 
       flyer.push({
         image,
-
-        /*
-         * Required by Image schema.
-         *
-         * Existing Cloudinary images must provide
-         * their existing publicId.
-         *
-         * New uploads receive publicId from Cloudinary.
-         */
-        publicId,
+        ...(publicId ? { publicId } : {}),
 
         imageSettings: {
           h: settings.h || "105%",
@@ -1118,11 +1182,12 @@ const createSiteItemImage = async (req, res) => {
 
     const imageDocumentId = imageDocument._id;
 
-    if (!Array.isArray(siteItem.images)) {
-      siteItem.images = [];
+    const imageOwner = restaurantId ? placement : siteItem;
+    if (!Array.isArray(imageOwner.images)) {
+      imageOwner.images = [];
     }
 
-    const alreadyExists = siteItem.images.some((value) => {
+    const alreadyExists = imageOwner.images.some((value) => {
       const valueId =
         typeof value === "object" ? value?._id || value?.id : value;
 
@@ -1133,7 +1198,7 @@ const createSiteItemImage = async (req, res) => {
     });
 
     if (!alreadyExists) {
-      siteItem.images.push(imageDocumentId);
+      imageOwner.images.push(imageDocumentId);
     }
 
     // ========================================================
@@ -1223,6 +1288,32 @@ const getSiteItemImage = async (req, res) => {
       });
     }
 
+    const restaurantId = req.query.restaurantId || null;
+    let placement = null;
+
+    if (restaurantId) {
+      if (!isValidObjectId(restaurantId)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid restaurant ID",
+        });
+      }
+
+      placement = getRestaurantPlacement(siteItem, restaurantId);
+      if (!(await canManageRestaurantPlacement(req.user, placement))) {
+        return res.status(403).json({
+          success: false,
+          message:
+            "You do not have permission to view this restaurant placement image.",
+        });
+      }
+    } else if (!(await canManageSiteItem(req.user, siteItem))) {
+      return res.status(403).json({
+        success: false,
+        message: "You do not have permission to view this SiteItem image.",
+      });
+    }
+
     /*
      * SiteItem.image can contain:
      *
@@ -1236,8 +1327,8 @@ const getSiteItemImage = async (req, res) => {
 
     let imageDocument = null;
 
-    if (Array.isArray(siteItem.images)) {
-      for (const imageValue of siteItem.images) {
+    if (Array.isArray(restaurantId ? placement.images : siteItem.images)) {
+      for (const imageValue of restaurantId ? placement.images : siteItem.images) {
         if (!mongoose.isValidObjectId(imageValue)) {
           continue;
         }

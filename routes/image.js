@@ -1,6 +1,7 @@
 const express = require("express");
 
 const upload = require("../middleware/upload");
+const auth = require("../middleware/auth");
 
 const {
   getImages,
@@ -26,8 +27,9 @@ const router = express.Router();
 router.get("/", getImages);
 router
   .route("/site-item/:id")
-  .get(getSiteItemImage)
+  .get(auth, getSiteItemImage)
   .post(
+    auth,
     upload.fields([
       {
         name: "flyer",

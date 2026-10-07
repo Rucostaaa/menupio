@@ -80,8 +80,55 @@ const paymentSchema = new mongoose.Schema(
   },
 );
 
+const orderItemSchema = new mongoose.Schema(
+  {
+    product: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "SiteItem",
+      required: true,
+    },
+    name: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    variantName: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    unitPrice: {
+      type: Number,
+      required: true,
+      min: [0, "Order item price cannot be negative"],
+    },
+    quantity: {
+      type: Number,
+      required: true,
+      min: [1, "Order item quantity must be greater than 0"],
+      max: 99,
+    },
+    notes: {
+      type: String,
+      trim: true,
+      maxlength: 300,
+      default: "",
+    },
+  },
+  {
+    _id: false,
+  },
+);
+
 const bookingSchema = new mongoose.Schema(
   {
+    kind: {
+      type: String,
+      enum: ["booking", "order"],
+      default: "booking",
+      index: true,
+    },
+
     restaurant: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Restaurant",
@@ -92,7 +139,10 @@ const bookingSchema = new mongoose.Schema(
     barber: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: [true, "Barber is required"],
+      required: function () {
+        return this.kind !== "order";
+      },
+      default: null,
       index: true,
     },
 
@@ -123,6 +173,11 @@ const bookingSchema = new mongoose.Schema(
     item: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "MenuItem",
+    },
+
+    orderItems: {
+      type: [orderItemSchema],
+      default: [],
     },
 
     customerDetails: {
@@ -255,6 +310,10 @@ bookingSchema.pre("validate", function () {
 
   if (!Number.isFinite(this.price) || this.price < 0) {
     throw new Error("Booking price cannot be negative");
+  }
+
+  if (this.kind === "order" && (!this.orderItems || !this.orderItems.length)) {
+    throw new Error("Orders must contain at least one item");
   }
 
   /*

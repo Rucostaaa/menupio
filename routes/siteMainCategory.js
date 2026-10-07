@@ -11,9 +11,13 @@ const {
   updateManySiteMainCategories,
   addCategoryToMainCategory,
   removeCategoryFromMainCategory,
+  createSiteMainCategory,
 } = require("../controllers/siteMainCategory");
 
-router.route("/").get(auth, getSiteMainCategories);
+router
+  .route("/")
+  .get(auth, getSiteMainCategories)
+  .post(auth, createSiteMainCategory);
 
 router
   .route("/bulk")

@@ -99,6 +99,23 @@ const createBookingPaymentIntent = async (booking, stripeAccountId) => {
   return paymentIntent;
 };
 
+const createOrderPaymentIntent = async (order, stripeAccountId) => {
+  const connectedStripe = getConnectedStripe(stripeAccountId);
+
+  return connectedStripe.paymentIntents.create({
+    amount: order.payment.amount,
+    currency: order.payment.currency || "eur",
+    automatic_payment_methods: {
+      enabled: true,
+    },
+    metadata: {
+      type: "order",
+      bookingId: String(order._id),
+      restaurantId: String(order.restaurant),
+    },
+  });
+};
+
 const getBookingPaymentIntent = async (booking) => {
   if (!booking?.payment?.stripePaymentIntentId) {
     throw createError(
@@ -660,6 +677,7 @@ const getBookingsForRestaurant = async ({
 
   const query = {
     restaurant: restaurantId,
+    kind: { $ne: "order" },
   };
 
   if (date) {
@@ -908,6 +926,7 @@ module.exports = {
   getConnectedStripe,
 
   createBookingPaymentIntent,
+  createOrderPaymentIntent,
   getBookingPaymentIntent,
   updateBookingPaymentFromIntent,
   captureBookingPayment,

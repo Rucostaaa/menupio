@@ -191,7 +191,7 @@ const updateAdminUserRole = async (req, res) => {
     const { role } = req.body;
 
     // Only admins can change user roles
-    if (req.user?.role !== "Admin") {
+    if (String(req.user?.role || "").trim().toLowerCase() !== "admin") {
       return res.status(403).json({
         success: false,
         message: "Apenas administradores podem alterar roles.",

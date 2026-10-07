@@ -25,14 +25,21 @@ const PORT = process.env.PORT || 5000;
 const allowedOrigins = [
   "http://localhost:5173",
   "http://127.0.0.1:5173",
+  "http://localhost:5174",
+  "http://127.0.0.1:5174",
   "https://menupio.pt",
+  "https://gamer.menupio.pt",
 ];
 app.use(
   cors({
     origin: allowedOrigins,
     credentials: false,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "X-Ticket-Access-Token",
+    ],
   }),
 );
 
@@ -51,6 +58,8 @@ app.use(
 app.use(compression());
 
 app.use(morgan("dev"));
+
+app.use("/api/payments", require("./routes/payments"));
 
 app.use(express.json({ limit: "20mb" }));
 
@@ -95,6 +104,7 @@ app.get("/health", (req, res) => {
 */
 app.use("/api/health", require("./routes/health"));
 app.use("/api/auth", require("./routes/auth"));
+app.use("/api/invitations", require("./routes/invitation"));
 
 app.use("/api/users", require("./routes/user"));
 
@@ -116,13 +126,16 @@ app.use((req, res, next) => {
 });
 app.use("/api/menu", require("./routes/menu"));
 app.use("/api/admin", require("./routes/admin"));
+app.use("/api/sales", require("./routes/sales"));
+app.use("/api/subscriptions", require("./routes/restaurantSubscriptions"));
 app.use("/api/sessions", require("./routes/session"));
 app.use("/api/bookings", require("./routes/booking"));
 app.use("/api/image", require("./routes/image"));
 app.use("/api/stripe", require("./routes/stripe"));
-app.use("/api/payments", require("./routes/payments"));
+app.use("/api/support", require("./routes/support"));
 app.use("/api/review", require("./routes/review"));
 app.use("/api/loyalty", require("./routes/loyalty"));
+app.use("/api/games", require("./routes/game"));
 app.use("/api/site-items", require("./routes/siteItem"));
 app.use("/api/site-categories", require("./routes/siteCategory"));
 app.use("/api/site-main-categories", require("./routes/siteMainCategory"));

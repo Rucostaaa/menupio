@@ -1,5 +1,6 @@
-const crypto = require("crypto");
+﻿const crypto = require("crypto");
 const Session = require("../models/Session");
+const User = require("../models/User");
 
 const ACTIVE_WINDOW = 45 * 1000;
 
@@ -397,3 +398,110 @@ exports.getSessionsByScreen = async (req, res) => {
     });
   }
 };
+
+const escapeRegex = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+exports.getSessionHistory = async (req, res) => {
+  try {
+    const q = req.query;
+    const page = Math.max(parseInt(q.page, 10) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(q.limit, 10) || 25, 1), 100);
+    const activeSince = new Date(Date.now() - ACTIVE_WINDOW);
+
+    const filter = { isBot: false };
+    const and = [];
+
+    if (q.from || q.to) {
+      filter.startedAt = {};
+      if (q.from) {
+        const from = new Date(q.from);
+        if (!Number.isNaN(from.getTime())) filter.startedAt.$gte = from;
+      }
+      if (q.to) {
+        const to = new Date(q.to);
+        if (!Number.isNaN(to.getTime())) {
+          to.setHours(23, 59, 59, 999);
+          filter.startedAt.$lte = to;
+        }
+      }
+      if (!Object.keys(filter.startedAt).length) delete filter.startedAt;
+    }
+
+    if (["desktop", "mobile", "tablet"].includes(q.device)) {
+      filter.device = q.device;
+    }
+    if (q.visitor === "logged") filter.user = { $ne: null };
+    if (q.visitor === "anonymous") filter.user = null;
+    if (q.status === "active") {
+      filter.isActive = true;
+      filter.lastSeen = { $gte: activeSince };
+    } else if (q.status === "ended") {
+      and.push({
+        $or: [{ isActive: false }, { lastSeen: { $lt: activeSince } }],
+      });
+    }
+    if (q.clicks === "with") filter["productClicks.0"] = { $exists: true };
+    if (q.clicks === "without") filter["productClicks.0"] = { $exists: false };
+    if (q.country) filter.country = String(q.country);
+
+    const search = String(q.search || "").trim().slice(0, 100);
+    if (search) {
+      const rx = new RegExp(escapeRegex(search), "i");
+      const users = await User.find({ $or: [{ name: rx }, { email: rx }] })
+        .select("_id")
+        .limit(200)
+        .lean();
+      and.push({
+        $or: [
+          { visitorId: rx },
+          { city: rx },
+          { country: rx },
+          { browser: rx },
+          { os: rx },
+          { currentPath: rx },
+          { landingPage: rx },
+          { referrer: rx },
+          { user: { $in: users.map((u) => u._id) } },
+        ],
+      });
+    }
+    if (and.length) filter.$and = and;
+
+    const sortMap = {
+      newest: { startedAt: -1 },
+      oldest: { startedAt: 1 },
+      longest: { sessionTime: -1 },
+      lastSeen: { lastSeen: -1 },
+    };
+    const sort = sortMap[q.sort] || sortMap.newest;
+
+    const [total, sessions, countries] = await Promise.all([
+      Session.countDocuments(filter),
+      Session.find(filter)
+        .select("-userAgent -ipHash")
+        .populate("user", "name email role")
+        .sort(sort)
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      Session.distinct("country", { isBot: false, country: { $ne: null } }),
+    ]);
+
+    return res.status(200).json({
+      success: true,
+      total,
+      page,
+      pages: Math.max(Math.ceil(total / limit), 1),
+      countries: countries.filter(Boolean).sort(),
+      sessions: sessions.map((s) => ({
+        ...s,
+        isLive: Boolean(s.isActive && s.lastSeen >= activeSince),
+        productClicks: s.productClicks || [],
+      })),
+    });
+  } catch (error) {
+    console.error("GET SESSION HISTORY ERROR:", error);
+    return res.status(500).json({ message: "Unable to retrieve session history." });
+  }
+};
+

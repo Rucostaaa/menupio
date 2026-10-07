@@ -5,10 +5,12 @@ const {
   getRestaurantLoyaltyUsers,
   stampLoyaltyCard,
   getLoyaltyCards,
+  getLoyaltyStampImage,
 } = require("../controllers/loyalty");
 
 const router = express.Router();
 
+router.get("/:restaurantId/stamp-image", getLoyaltyStampImage);
 router.get("/:restaurantId/card", auth, getMyLoyaltyCard);
 router.get("/:restaurantId/users", auth, getRestaurantLoyaltyUsers);
 router.post("/:restaurantId/stamp", auth, stampLoyaltyCard);

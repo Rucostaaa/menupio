@@ -1,7 +1,13 @@
 const mongoose = require("mongoose");
 const User = require("../models/User");
 const Restaurant = require("../models/Restaurant");
-const MenuItem = require("../models/MenuItem");
+const Image = require("../models/Image");
+const {
+  hasLoyaltyTargets,
+  findEligibleSiteItems,
+  getConfiguredItemIds,
+  getConfiguredCategoryIds,
+} = require("../utils/loyaltyConfig");
 const { getSocket } = require("../utils/socket");
 
 const getRestaurant = async (restaurantId) => {
@@ -33,20 +39,46 @@ const getRestaurant = async (restaurantId) => {
   return restaurant;
 };
 
-const getCardPayload = (user, restaurant) => {
+// Item shown on the card: the first product that earns stamps.
+const resolveDisplayItem = async (restaurant) => {
+  const [item] = await findEligibleSiteItems(restaurant, "_id name images");
+
+  if (!item) return null;
+
+  return { _id: item._id, name: item.name, images: item.images };
+};
+
+const getCardPayload = (user, restaurant, displayItem = null) => {
   const card = user.loyaltyCards.find(
     (item) => String(item.restaurant) === String(restaurant._id),
   );
+  const config = restaurant.fidelization?.[0];
 
   return {
+    cardId: card?._id ? String(card._id) : null,
     userId: String(user._id),
     restaurantId: String(restaurant._id),
     restaurantName: restaurant.name,
     stamps: card?.stamps || 0,
+    freeCoffes: card?.freeCoffes || 0,
+    maxStamps: card?.maxStamps || config?.maxStamps || 10,
+    menuItem: displayItem,
+    siteItems: getConfiguredItemIds(config),
+    siteCategories: getConfiguredCategoryIds(config),
     history: card?.history || [],
   };
 };
 
+const emitLoyaltyPayload = (userId, payload) => {
+  const io = getSocket();
+
+  if (!io) {
+    console.warn("[LOYALTY] Socket.IO instance is not available.");
+    return;
+  }
+
+  io.to(`user:${userId}`).emit("loyalty:updated", payload);
+};
 exports.getMyLoyaltyCard = async (req, res) => {
   try {
     const restaurant = await getRestaurant(req.params.restaurantId);
@@ -54,12 +86,48 @@ exports.getMyLoyaltyCard = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      card: getCardPayload(user, restaurant),
+      card: getCardPayload(
+        user,
+        restaurant,
+        await resolveDisplayItem(restaurant),
+      ),
     });
   } catch (error) {
     return res.status(error.statusCode || 500).json({
       success: false,
       message: error.message || "Failed to load loyalty card.",
+    });
+  }
+};
+
+exports.getLoyaltyStampImage = async (req, res) => {
+  try {
+    const restaurant = await getRestaurant(req.params.restaurantId);
+    const eligible = await findEligibleSiteItems(
+      restaurant,
+      "_id images image",
+    );
+    console.log("eligible items for stamp image:", eligible);
+    let stampImage = null;
+
+    for (const item of eligible) {
+      for (const imageId of item.images || []) {
+        stampImage =
+          byId.get(String(imageId))?.flyer?.find((flyer) => flyer?.image)
+            ?.image || null;
+        if (stampImage) break;
+      }
+      if (stampImage) break;
+    }
+
+    return res.status(200).json({
+      success: true,
+      stampImage: eligible.length > 0 ? eligible[0]?.image[0] : null,
+    });
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({
+      success: false,
+      message: error.message || "Failed to load stamp image.",
     });
   }
 };
@@ -173,7 +241,7 @@ exports.stampLoyaltyCard = async (req, res) => {
     const restaurant = await Restaurant.findOne({
       _id: req.params.restaurantId,
       owner: req.user._id,
-    }).populate("fidelization.menuItem", "name price images");
+    });
 
     if (!restaurant) {
       console.log(
@@ -186,7 +254,10 @@ exports.stampLoyaltyCard = async (req, res) => {
       });
     }
 
-    if (!restaurant.hasFidelization || !restaurant.fidelization[0]?.menuItem) {
+    if (
+      !restaurant.hasFidelization ||
+      !hasLoyaltyTargets(restaurant.fidelization[0])
+    ) {
       console.log(
         `[LOYALTY] Loyalty not enabled | restaurant=${restaurant._id}`,
       );
@@ -208,6 +279,8 @@ exports.stampLoyaltyCard = async (req, res) => {
       });
     }
 
+    const displayItem = await resolveDisplayItem(restaurant);
+
     let card = user.loyaltyCards.find(
       (item) => String(item.restaurant) === String(restaurant._id),
     );
@@ -217,33 +290,140 @@ exports.stampLoyaltyCard = async (req, res) => {
     if (!card) {
       card = user.loyaltyCards.create({
         restaurant: restaurant._id,
-        menuItem: restaurant.fidelization[0].menuItem._id,
+        menuItem: displayItem?._id || null,
         maxStamps: restaurant.fidelization[0].maxStamps,
         stamps: 0,
+        freeCoffes: 0,
         history: [],
       });
 
       user.loyaltyCards.push(card);
 
       card = user.loyaltyCards[user.loyaltyCards.length - 1];
+    } else if (!card.menuItem && displayItem) {
+      card.menuItem = displayItem._id;
     }
 
     const previousStamps = Number(card.stamps) || 0;
+    const previousFreeCoffes = Number(card.freeCoffes) || 0;
+    const maxStamps = Number(card.maxStamps) || 10;
 
-    card.stamps = Math.min(previousStamps + amount, card.maxStamps);
+    console.log(
+      `[LOYALTY] Before update | stamps=${previousStamps} | freeCoffes=${previousFreeCoffes} | maxStamps=${maxStamps}`,
+    );
 
-    card.history.push({
-      stamps: amount,
-      action: "added",
-    });
+    /*
+     * =========================================================
+     * 1. USER ALREADY HAS A FREE COFFEE
+     * =========================================================
+     *
+     * The next stamp is used to redeem the free coffee.
+     *
+     * Example:
+     *
+     * freeCoffes = 1
+     * stamps = 9
+     *
+     * Scan:
+     *
+     * freeCoffes -> 0
+     * stamps -> 0
+     */
+
+    if (previousFreeCoffes > 0) {
+      card.freeCoffes = previousFreeCoffes - 1;
+      card.stamps = 0;
+
+      card.history.push({
+        stamps: 0,
+        action: "redeemed",
+      });
+
+      await user.save();
+
+      console.log(
+        `[LOYALTY] FREE COFFEE REDEEMED | user=${userId} | card=${card._id} | previousFreeCoffes=${previousFreeCoffes} | remainingFreeCoffes=${card.freeCoffes} | stamps reset=0`,
+      );
+
+      const payload = getCardPayload(user, restaurant, displayItem);
+
+      console.log(
+        `[LOYALTY] Socket emit | room=user:${userId} | event=loyalty:updated`,
+      );
+
+      console.log(
+        "[LOYALTY] Socket payload:",
+        JSON.stringify(payload, null, 2),
+      );
+
+      emitLoyaltyPayload(userId, payload);
+
+      return res.status(200).json({
+        success: true,
+        message: "Café grátis utilizado.",
+        card: payload,
+      });
+    }
+
+    /*
+     * =========================================================
+     * 2. NORMAL STAMPING
+     * =========================================================
+     */
+
+    const newStampTotal = previousStamps + amount;
+
+    /*
+     * =========================================================
+     * 3. REWARD THRESHOLD
+     * =========================================================
+     *
+     * Example:
+     *
+     * 8 + 1 = 9
+     *
+     * The user earns ONE free coffee.
+     *
+     * We keep the 9 stamps on the card because the UI uses
+     * those 9 collected stamps to show the reward as unlocked.
+     */
+
+    if (newStampTotal >= maxStamps - 1) {
+      card.stamps = Math.min(newStampTotal, maxStamps - 1);
+      card.freeCoffes = previousFreeCoffes + 1;
+
+      card.history.push({
+        stamps: amount,
+        action: "added",
+      });
+
+      console.log(
+        `[LOYALTY] 🎁 FREE COFFEE EARNED | user=${userId} | previousStamps=${previousStamps} | added=${amount} | newStamps=${card.stamps} | freeCoffes=${card.freeCoffes}`,
+      );
+    } else {
+      /*
+       * Normal stamp.
+       */
+
+      card.stamps = newStampTotal;
+
+      card.history.push({
+        stamps: amount,
+        action: "added",
+      });
+
+      console.log(
+        `[LOYALTY] Stamp added | user=${userId} | previous=${previousStamps} | added=${amount} | new=${card.stamps} | max=${maxStamps}`,
+      );
+    }
 
     await user.save();
 
     console.log(
-      `[LOYALTY] Card saved | user=${userId} | card=${card._id} | previous=${previousStamps} | added=${amount} | new=${card.stamps} | max=${card.maxStamps} | created=${cardWasCreated}`,
+      `[LOYALTY] Card saved | user=${userId} | card=${card._id} | previous=${previousStamps} | added=${amount} | new=${card.stamps} | freeCoffes=${card.freeCoffes} | max=${card.maxStamps} | created=${cardWasCreated}`,
     );
 
-    const payload = getCardPayload(user, restaurant);
+    const payload = getCardPayload(user, restaurant, displayItem);
 
     console.log(
       `[LOYALTY] Socket emit | room=user:${userId} | event=loyalty:updated`,
@@ -251,21 +431,14 @@ exports.stampLoyaltyCard = async (req, res) => {
 
     console.log("[LOYALTY] Socket payload:", JSON.stringify(payload, null, 2));
 
-    const socket = getSocket();
-
-    if (!socket) {
-      console.warn("[LOYALTY] Socket.IO instance is not available.");
-    } else {
-      socket.to(`user:${userId}`).emit("loyalty:updated", payload);
-
-      console.log(
-        `[LOYALTY] Socket event emitted successfully | room=user:${userId}`,
-      );
-    }
+    emitLoyaltyPayload(userId, payload);
 
     return res.status(200).json({
       success: true,
-      message: "Loyalty card updated.",
+      message:
+        card.freeCoffes > previousFreeCoffes
+          ? "Café grátis desbloqueado."
+          : "Cartão de fidelização atualizado.",
       card: payload,
     });
   } catch (error) {

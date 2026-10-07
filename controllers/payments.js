@@ -1,6 +1,8 @@
 const Stripe = require("stripe");
 
 const Booking = require("../models/Booking");
+const Restaurant = require("../models/Restaurant");
+const { syncRestaurantSubscription } = require("../utils/restaurantSubscription");
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
@@ -42,6 +44,66 @@ const stripeWebhook = async (req, res) => {
 
   try {
     switch (event.type) {
+      case "checkout.session.completed": {
+        const checkoutSession = event.data.object;
+        if (checkoutSession.mode === "subscription" && !event.account) {
+          const subscriptionId =
+            typeof checkoutSession.subscription === "string"
+              ? checkoutSession.subscription
+              : checkoutSession.subscription?.id;
+          if (subscriptionId) {
+            const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+            await syncRestaurantSubscription(subscription);
+          }
+        }
+        break;
+      }
+
+      case "customer.subscription.created":
+      case "customer.subscription.updated":
+      case "customer.subscription.deleted": {
+        if (!event.account) {
+          const subscription = await stripe.subscriptions.retrieve(
+            event.data.object.id,
+          );
+          await syncRestaurantSubscription(subscription);
+        }
+        break;
+      }
+
+      case "invoice.paid":
+      case "invoice.payment_failed": {
+        if (!event.account) {
+          const invoice = event.data.object;
+          const subscriptionReference =
+            invoice.subscription ||
+            invoice.parent?.subscription_details?.subscription;
+          const subscriptionId =
+            typeof subscriptionReference === "string"
+              ? subscriptionReference
+              : subscriptionReference?.id;
+          if (subscriptionId) {
+            const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+            await syncRestaurantSubscription(subscription);
+          }
+        }
+        break;
+      }
+
+      case "checkout.session.expired": {
+        const checkoutSession = event.data.object;
+        if (checkoutSession.mode === "subscription" && !event.account) {
+          await require("../models/RestaurantSubscription").updateOne(
+            {
+              stripeCheckoutSessionId: checkoutSession.id,
+              status: "incomplete",
+            },
+            { $set: { status: "incomplete_expired" } },
+          );
+        }
+        break;
+      }
+
       /*
        * PAYMENT PROCESSING
        */
@@ -87,6 +149,18 @@ const stripeWebhook = async (req, res) => {
         });
 
         if (!booking) {
+          const customerId =
+            typeof paymentIntent.customer === "string"
+              ? paymentIntent.customer
+              : paymentIntent.customer?.id;
+          const billingCustomer = customerId
+            ? await Restaurant.exists({
+                "billing.stripeCustomerId": customerId,
+              })
+            : null;
+          if (billingCustomer) {
+            break;
+          }
           console.error(
             "❌ NO BOOKING FOUND FOR PAYMENT INTENT:",
             paymentIntent.id,
@@ -106,6 +180,9 @@ const stripeWebhook = async (req, res) => {
         }
 
         booking.payment.status = "paid";
+        if (booking.kind === "order") {
+          booking.status = "confirmed";
+        }
 
         booking.payment.stripePaymentIntentId = paymentIntent.id;
 

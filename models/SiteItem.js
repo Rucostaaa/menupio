@@ -40,6 +40,32 @@ const siteItemSchema = new mongoose.Schema(
             },
           },
         ],
+        stripe: {
+          connected: {
+            type: Boolean,
+            default: false,
+          },
+          productId: {
+            type: String,
+            default: null,
+          },
+          priceId: {
+            type: String,
+            default: null,
+          },
+          currency: {
+            type: String,
+            default: "eur",
+          },
+          active: {
+            type: Boolean,
+            default: false,
+          },
+          syncedAt: {
+            type: Date,
+            default: null,
+          },
+        },
         imageSettings: {
           h: {
             type: String,
@@ -125,6 +151,12 @@ const siteItemSchema = new mongoose.Schema(
       {
         type: Map,
         of: String,
+      },
+    ],
+    recommendations: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "SiteItem",
       },
     ],
   },

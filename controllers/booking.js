@@ -38,6 +38,18 @@ const {
 
 const { sendBookingConfirmationEmail } = require("../utils/twilioEmail");
 
+const rejectMenuOrderAction = (res, booking) => {
+  if (booking?.kind !== "order") {
+    return false;
+  }
+
+  res.status(409).json({
+    success: false,
+    message: "This booking action is not available for menu orders.",
+  });
+  return true;
+};
+
 /* =========================================================
    CREATE BOOKING
 ========================================================= */
@@ -512,9 +524,17 @@ const getBooking = async (req, res) => {
       });
     }
 
+    const publicBooking =
+      booking.kind === "order"
+        ? {
+            ...booking.toObject(),
+            customer: { name: booking.customer?.name || "" },
+          }
+        : booking;
+
     return res.status(200).json({
       success: true,
-      booking,
+      booking: publicBooking,
     });
   } catch (error) {
     return sendBookingError(res, error, "Failed to get booking.");
@@ -561,6 +581,7 @@ const updateBooking = async (req, res) => {
     }
 
     const booking = await getBookingById(id);
+    if (rejectMenuOrderAction(res, booking)) return;
 
     if (!booking) {
       return res.status(404).json({
@@ -693,6 +714,7 @@ const cancelBooking = async (req, res) => {
     }
 
     const booking = await getBookingById(id);
+    if (rejectMenuOrderAction(res, booking)) return;
 
     if (!booking) {
       return res.status(404).json({
@@ -817,6 +839,7 @@ const confirmBooking = async (req, res) => {
     }
 
     const booking = await getBookingById(id);
+    if (rejectMenuOrderAction(res, booking)) return;
 
     if (!booking) {
       return res.status(404).json({
@@ -888,6 +911,7 @@ const completeBooking = async (req, res) => {
     }
 
     const booking = await getBookingById(id);
+    if (rejectMenuOrderAction(res, booking)) return;
 
     if (!booking) {
       return res.status(404).json({
@@ -960,6 +984,7 @@ const captureBookingPayment = async (req, res) => {
     }
 
     const booking = await getBookingById(id);
+    if (rejectMenuOrderAction(res, booking)) return;
 
     if (!booking) {
       return res.status(404).json({
@@ -1017,6 +1042,7 @@ const retryCaptureBookingPayment = async (req, res) => {
     }
 
     const booking = await getBookingById(id);
+    if (rejectMenuOrderAction(res, booking)) return;
 
     if (!booking) {
       return res.status(404).json({
@@ -1088,6 +1114,7 @@ const updateBookingPayment = async (req, res) => {
     }
 
     const booking = await getBookingById(bookingId);
+    if (rejectMenuOrderAction(res, booking)) return;
 
     if (!booking) {
       return res.status(404).json({
@@ -1172,6 +1199,7 @@ const sendBookingEmail = async (req, res) => {
     }
 
     const booking = await getBookingById(bookingId);
+    if (rejectMenuOrderAction(res, booking)) return;
 
     if (!booking) {
       return res.status(404).json({
@@ -1220,6 +1248,7 @@ const claimBooking = async (req, res) => {
     }
 
     const booking = await getBookingById(id);
+    if (rejectMenuOrderAction(res, booking)) return;
 
     if (!booking) {
       return res.status(404).json({
@@ -1387,6 +1416,7 @@ const markNoShow = async (req, res) => {
     }
 
     const booking = await getBookingById(id);
+    if (rejectMenuOrderAction(res, booking)) return;
 
     if (!booking) {
       return res.status(404).json({
@@ -1458,6 +1488,7 @@ const deleteBooking = async (req, res) => {
     }
 
     const booking = await getBookingById(id);
+    if (rejectMenuOrderAction(res, booking)) return;
 
     if (!booking) {
       return res.status(404).json({

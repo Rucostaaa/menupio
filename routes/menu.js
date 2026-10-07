@@ -24,7 +24,14 @@ const {
 router
   .route("/")
   .get(auth, getMenus)
-  .post(auth, upload.single("mainImage"), createMenu);
+  .post(
+    auth,
+    upload.fields([
+      { name: "mainImage", maxCount: 1 },
+      { name: "backgroundImage", maxCount: 1 },
+    ]),
+    createMenu,
+  );
 router.route("/all").get(auth, getAllMenus);
 router.route("/menu").post(auth, upload.single("mainImage"), createSiteMenu);
 /*
@@ -44,7 +51,14 @@ router.route("/get-restaurant-menus").post(auth, getRestaurantMenus);
 router
   .route("/:id")
   .get(getMenu)
-  .put(auth, upload.single("mainImage"), updateMenu)
+  .put(
+    auth,
+    upload.fields([
+      { name: "mainImage", maxCount: 1 },
+      { name: "backgroundImage", maxCount: 1 },
+    ]),
+    updateMenu,
+  )
   .delete(auth, deleteMenu);
 router.route("/:id/initial-data").get(getInitialData);
 

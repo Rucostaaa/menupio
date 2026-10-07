@@ -3,6 +3,8 @@ const catchAsync = require("../utils/catchAsync");
 const generateToken = require("../utils/generateToken");
 const AppError = require("../utils/AppError");
 const Restaurant = require("../models/Restaurant");
+const normalizeEmail = (email) => String(email || "").trim().toLowerCase();
+const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /*
 |--------------------------------------------------------------------------
@@ -10,17 +12,20 @@ const Restaurant = require("../models/Restaurant");
 |--------------------------------------------------------------------------
 */
 exports.register = catchAsync(async (req, res) => {
-  const { name, email, password, role } = req.body;
+  const { name, email, password } = req.body;
+  const normalizedEmail = normalizeEmail(email);
 
-  const exists = await User.findOne({ email });
+  const exists = await User.findOne({
+    email: { $regex: `^${escapeRegex(normalizedEmail)}$`, $options: "i" },
+  });
 
   if (exists) throw new AppError("Email already exists", 400);
 
   const user = await User.create({
     name,
-    email,
+    email: normalizedEmail,
     password,
-    role,
+    role: "user",
   });
 
   const token = generateToken(user._id);
@@ -48,7 +53,10 @@ exports.register = catchAsync(async (req, res) => {
     throw new AppError("Email and password are required", 400);
   }
 
-  const user = await User.findOne({ email });
+  const normalizedEmail = normalizeEmail(email);
+  const user = await User.findOne({
+    email: { $regex: `^${escapeRegex(normalizedEmail)}$`, $options: "i" },
+  });
 
   if (!user) throw new AppError("Credenciais invalidas", 401);
 

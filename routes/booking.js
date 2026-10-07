@@ -21,6 +21,18 @@ const {
   retryCaptureBookingPayment,
 } = require("../controllers/booking");
 const auth = require("../middleware/auth");
+const {
+  getRestaurantOrders,
+  updateRestaurantOrderStatus,
+  createMenuOrder,
+  createOrderPaymentIntentForFollow,
+  syncOrderPayment,
+} = require("../controllers/order");
+router.get("/orders/restaurant", auth, getRestaurantOrders);
+router.patch("/orders/:orderId/status", auth, updateRestaurantOrderStatus);
+router.post("/orders", createMenuOrder);
+router.post("/orders/:orderId/payment-intent", createOrderPaymentIntentForFollow);
+router.post("/orders/:orderId/payment", syncOrderPayment);
 router.post("/", createBooking);
 router.post("/email/:bookingId", sendBookingEmail);
 router.get("/barber/:barberId", getBarberBookings);
